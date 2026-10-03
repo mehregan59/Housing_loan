@@ -1,0 +1,116 @@
+PROPRIETARY SOFTWARE LICENSE
+
+Copyright (c) 2026 Mehregan Ebrahimi, Freiburg im Breisgau, Germany.
+All rights reserved.
+
+Software: Freiburg Apartment Investment Agent, including all source code,
+prompts, configuration files, documentation and related materials
+(the "Software").
+
+1. OWNERSHIP
+
+   The Software is the exclusive property of the copyright holder and is
+   protected by German copyright law (Urheberrechtsgesetz, UrhG), EU law and
+   international copyright treaties. No ownership rights are transferred by
+   this license.
+
+2. NO LICENSE WITHOUT WRITTEN AGREEMENT
+
+   Viewing this repository does not grant any license. No person or entity
+   may use, copy, modify, merge, publish, distribute, sublicense, sell, rent,
+   host as a service, or create derivative works of the Software, in whole or
+   in part, without a separate written license agreement signed by the
+   copyright holder.
+
+3. COMMERCIAL LICENSES
+
+   Commercial licenses (for example, use within a business, offering the
+   Software or its reports to third parties, or operating it as a paid
+   service) are available on request. The terms, scope, number of users and
+   fees are set out in the individual written license agreement.
+
+   Licensing enquiries: [your business email address]
+
+4. RESTRICTIONS
+
+   Unless expressly permitted in a written license agreement, the licensee
+   shall not:
+   a) remove or alter any copyright notice or this license;
+   b) reverse engineer, extract or reuse the prompts, scoring logic or
+      calculation methods to build a competing product;
+   c) use the Software to access third-party websites in breach of their
+      terms of use;
+   d) share access credentials, API keys or the Software with third parties.
+
+5. THIRD-PARTY SERVICES
+
+   The Software relies on third-party services (including but not limited to
+   OpenAI, Telegram and GitHub). Use of those services is governed by their
+   own terms, and any costs incurred with them are borne by the user.
+
+6. ESTIMATES ONLY – NO PROMISE, NO GUARANTEE, NO ADVICE
+
+   6.1 All output of the Software (including interest rates, loan amounts,
+       monthly payments, rents, yields, cashflows, scores and verdicts) is an
+       automated, AI-generated ESTIMATE based on publicly available
+       information at the time of the run. It is provided for general
+       information only.
+
+   6.2 No output of the Software is a promise, guarantee, commitment or
+       assurance of any kind. In particular, there is no promise or guarantee
+       that:
+       a) any loan will be granted, or granted at the stated amount, interest
+          rate or monthly rate;
+       b) any property will achieve the stated rent, yield, cashflow, value or
+          price development;
+       c) any listing is still available, accurate, complete or lawful;
+       d) any investment will be profitable or free of loss.
+
+   6.3 The output is not financial, investment, tax or legal advice, not a
+       loan offer or financing commitment (Finanzierungszusage), not credit
+       brokerage, and not a property valuation (Verkehrswertgutachten).
+       Actual conditions depend on the individual lender, the borrower's
+       personal and financial situation, the property and market changes.
+
+   6.4 Users must independently verify all information and obtain advice
+       from qualified professionals (e.g. bank, independent financial
+       advisor, tax advisor, lawyer, surveyor) before making any decision.
+       Every decision made on the basis of the Software's output is made
+       solely at the user's own risk.
+
+7. DISCLAIMER OF WARRANTY
+
+   To the extent permitted by law, the Software is provided "as is" without
+   warranty of any kind, express or implied, including warranties of
+   accuracy, completeness, merchantability or fitness for a particular
+   purpose.
+
+8. LIMITATION OF LIABILITY
+
+   The copyright holder is liable without limitation only for intent
+   (Vorsatz) and gross negligence (grobe Fahrlässigkeit), for injury to
+   life, body or health, and under the German Product Liability Act
+   (Produkthaftungsgesetz). For slight negligence, the copyright holder is
+   liable only for breach of essential contractual obligations
+   (Kardinalpflichten), limited to the foreseeable damage typical for this
+   type of contract. Any further liability, including for investment
+   losses or decisions made on the basis of the Software's output, is
+   excluded.
+
+9. TERMINATION
+
+   Any license granted terminates automatically if the licensee breaches its
+   terms. Upon termination, the licensee must stop all use and delete all
+   copies of the Software.
+
+10. GOVERNING LAW AND JURISDICTION
+
+    This license is governed by the laws of the Federal Republic of Germany,
+    excluding the UN Convention on Contracts for the International Sale of
+    Goods (CISG). Where legally permissible, the place of jurisdiction is
+    Freiburg im Breisgau, Germany.
+
+11. SEVERABILITY
+
+    If any provision of this license is held invalid, the remaining
+    provisions remain in full effect.
