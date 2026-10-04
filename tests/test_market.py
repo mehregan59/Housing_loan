@@ -143,6 +143,22 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(matches,[])
         self.assertEqual(flex,[])
 
+    def test_missing_bw_tax_does_not_hide_cached_apartments(self):
+        broad={**S,'max_price_eur':1000000,'max_loan_eur':1200000,'equity_eur':200000,'min_size_m2':20}
+        prices=[250000,165000,150000,299990,139000]
+        items=[listing(url=SOURCE+str(i),price_eur=p,tax_pct=None,tenure='',auction=None) for i,p in enumerate(prices)]
+        text,urls=market.render(pool(items),broad,R,(48,7.85),NOW.isoformat(),True)
+        self.assertEqual(len(urls),5)
+        self.assertIn('5 meet numerical limits',text)
+        self.assertIn('official state rate',text)
+        self.assertTrue(all(x['tax_pct'] is None for x in items),'Saved research is not mutated')
+
+    def test_bw_fallback_never_applies_to_other_states(self):
+        x=listing(state='Bayern',tax_pct=None)
+        self.assertIsNone(market.with_verified_tax(x)['tax_pct'])
+        text,_=market.render(pool([x]),S,R,(48,7.85),NOW.isoformat(),True)
+        self.assertIn('Main blockers: financing data missing',text)
+
     def test_new_properties_first_seen_label_and_more_than_five(self):
         items=[listing(url=SOURCE+str(i),title='Apartment '+str(i)) for i in range(10)]
         s={**S,'_seen':{items[0]['url']}}
@@ -216,7 +232,7 @@ class MarketTests(unittest.TestCase):
     def test_same_settings_and_data_return_previous_report(self):
         import hashlib,json
         pr=row()
-        signature=hashlib.sha256(json.dumps({'renderer_version':3,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
+        signature=hashlib.sha256(json.dumps({'renderer_version':4,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
         db=Mock();db.request.side_effect=[[row('rates')],[pr],[{'report':'Previous report','usage':{'report_signature':signature}}]]
         meter={'pending':False,'cost':0,'calls':[]}
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:

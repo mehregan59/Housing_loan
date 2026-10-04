@@ -179,6 +179,14 @@ def choose_pool(rows,s,now):
     return min(candidates,key=lambda x:x[0])[1:] if candidates else (None,None)
 
 
+# Official rate verified 2026-10-04; time-bounded fallback for missing extraction.
+BW_TAX_SOURCE='https://finanzamt-bw.fv-bwl.de/%2CLde_DE/Startseite/Service/Wann%2Bmuss%2Bich%2BGrunderwerbsteuer%2Bzahlen%2Bund%2Bwie%2Bhoch%2Bist%2Bdiese_'
+def with_verified_tax(x):
+    if x['tax_pct'] is None and norm(x['state'])==norm('Baden-Württemberg') and 0 <= (date.today()-date(2026,10,4)).days <= 90:
+        return dict(x,tax_pct=5,tax_source_url=BW_TAX_SOURCE,tax_lookup=True)
+    return x
+
+
 def calculate(x,s,rates):
     r=[z['rate_pct'] for z in rates['rates']]
     midpoint=(min(r)+max(r))/2 if r else None
@@ -196,7 +204,7 @@ def calculate(x,s,rates):
 def screen(pool,s,rates,center):
     matches=[]; flexible=[]; blockers={}
     for original in pool['listings']:
-        x=original
+        x=with_verified_tax(original)
         if point(x) is None:
             # Cached pools already contain source-validated municipality points.
             candidates=[p for p in pool.get('places',[]) if location_norm(p['name'])==location_norm(x['town']) and point(p)]
@@ -226,7 +234,9 @@ def screen(pool,s,rates,center):
                 fail.append((field,value))
                 nearby=(value>=limit-50) if field=='min_monthly_cashflow_eur' else (value>=limit*tolerance if minimum else value<=limit*tolerance)
                 if nearby: mild.append((field,value))
-        for f,_ in fail: blockers[f]=blockers.get(f,0)+1
+        for f,v in fail:
+            label='financing data missing' if f=='max_loan_eur' and v is None else f
+            blockers[label]=blockers.get(label,0)+1
         # Scores are an explicit screening rubric, with uncertainty/risk penalties.
         score=2 + (min(4,c['yield']/2) if c['yield'] is not None else 0)
         score+=2 if c['cash'] is not None and c['cash']>=0 else 0
@@ -249,6 +259,7 @@ def render(pool,s,rates,center,checked_at,cache_hit):
             'radius_km':t('search radius','Suchradius'),'max_loan_eur':t('loan limit','Kreditgrenze'),
             'max_price_per_m2':t('price per m²','Preis pro m²'),'target_gross_yield_pct':t('rental yield','Mietrendite'),
             'min_monthly_cashflow_eur':t('monthly result','Monatsergebnis'),
+            'financing data missing':t('financing data missing','Finanzierungsdaten fehlen'),
             'location unverified':t('location unverified','Standort ungeprüft'),
             'unverified tenure/auction status':t('ownership or auction status unknown','Eigentums- oder Auktionsstatus unbekannt')}
     def money(v): return t('unknown','unbekannt') if v is None else f'€{v:,.0f}'
@@ -290,6 +301,7 @@ def render(pool,s,rates,center,checked_at,cache_hit):
             out.append(t('🔎 Before unknown owner fees: ','🔎 Vor unbekannten Eigentümerkosten: ')+result(partial)+t(' (maintenance already included; final result unknown).',' (Instandhaltung bereits enthalten; Endergebnis unbekannt).'))
         if x['tax_pct'] is not None and x['broker_pct'] is not None:
             out.append(t('🧾 Purchase costs used: ','🧾 Angesetzte Kaufnebenkosten: ')+f'{x["tax_pct"]:g}% '+t('transfer tax','Grunderwerbsteuer')+f' + ~2% '+t('notary/registry','Notar/Grundbuch')+f' + {x["broker_pct"]:g}% '+t('buyer commission','Käuferprovision'))
+        if x.get('tax_lookup'): out.append(t('Transfer tax: official state rate, verified 2026-10-04. ','Grunderwerbsteuer: amtlicher Landessatz, geprüft am 04.10.2026. ')+x['tax_source_url'])
         for field in ('rent_monthly','owner_cost_monthly'):
             v=x[field]
             if v['kind']=='estimate': out.append(t('Estimate basis: ','Schätzgrundlage: ')+v['basis'][:180]+' '+v['source_url'])
