@@ -26,8 +26,10 @@ jobs:
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -c 'CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;'
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f supabase/migrations/001_bot.sql
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f supabase/migrations/002_shared_research.sql
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f supabase/migrations/003_admin_quota.sql
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f tests/database.sql
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f tests/cache_database.sql
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f tests/admin_database.sql
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x

@@ -70,7 +70,7 @@ Monthly cashflow: ${optional('min_monthly_cashflow_eur','EUR')}
 
 📅 Weekly reports: ${u.weekly?'On':'Off'}
 Schedule: ${DAYS[u.schedule_day]}, ${u.schedule_time} · ${u.timezone}
-Plan: ${u.plan==='paid'?'Paid — up to 7 reports/week':'Free — 1 report/week'}
+Plan: ${u.admin_unlimited?'Administrator — no weekly report limit':u.plan==='paid'?'Paid — up to 7 reports/week':'Free — 1 report/week'}
 
 Tap a button below to edit. Purchase costs count toward your loan limit. These are preferences, not a financing approval.`;
 }
@@ -164,6 +164,15 @@ Deno.serve(async req => {
     const action=cb?String(cb.data):'';
     let rows = await db('GET','bot_users?user_id=eq.'+id);
     if (!rows.length && id===admin) rows = await db('POST','bot_users',{user_id:id,approved:true});
+    // Only the configured private administrator can bind the database quota exemption.
+    let adminUnlimited=false;
+    if (id===admin) {
+      const control=(await db('GET','bot_control?id=eq.1'))[0];
+      if (control&&Object.prototype.hasOwnProperty.call(control,'admin_user_id')) {
+        if (Number(control.admin_user_id)!==admin) await db('PATCH','bot_control?id=eq.1',{admin_user_id:admin});
+        adminUnlimited=true;
+      }
+    }
     // Decisions are private, admin-only, and bound to the latest pending request.
     if (action.startsWith('access:')) {
       if (id!==admin) { await reply(id,'Only the administrator can decide access requests.'); return new Response('ok'); }
@@ -220,6 +229,7 @@ Deno.serve(async req => {
       return new Response('ok');
     }
     const user = rows[0];
+    user.admin_unlimited=adminUnlimited;
     const text = String(cb ? '/'+cb.data : message.text || '').slice(0,2500).trim();
     const [rawcmd, ...parts] = text.split(/\s+/);
     const cmd = rawcmd.split('@')[0].toLowerCase();
@@ -389,7 +399,7 @@ Deno.serve(async req => {
     } else if (cmd==='/weekly') {
       if (!['on','off'].includes(rest)) throw new Error('Use /weekly on|off');
       await db('PATCH','bot_users?user_id=eq.'+id,{weekly:rest==='on'});
-      await reply(id,'Weekly reports '+rest+'. They count toward your quota.');
+      await reply(id,'Weekly reports '+rest+(adminUnlimited?'. Your administrator account has no weekly report limit.':'. They count toward your quota.'));
     } else if (cmd==='/quota') {
       // SQL uses server-side Berlin week reset. Fetch latest jobs, calculate with Berlin date.
       const local = new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Berlin',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
@@ -397,7 +407,7 @@ Deno.serve(async req => {
       const week=d.toISOString().slice(0,10);
       const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&week_start=eq.'+week+'&select=status,charged_usd');
       const used=jobs.filter((j:any)=>j.status!=='failed'||Number(j.charged_usd)>0).length;
-      await reply(id,`Plan: ${user.plan}\nUsed: ${used} / ${user.plan==='paid'?7:1} this week. Reset Monday 00:00 Europe/Berlin.`);
+      await reply(id,adminUnlimited?`Administrator: no weekly report limit.\nReports this week: ${used}.\nMonthly spending cap and one active analysis at a time still apply.`:`Plan: ${user.plan}\nUsed: ${used} / ${user.plan==='paid'?7:1} this week. Reset Monday 00:00 Europe/Berlin.`);
     } else if (cmd==='/last') {
       const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&status=eq.complete&order=finished_at.desc&limit=1&select=report');
       await reply(id,jobs.length?jobs[0].report:'No completed report yet.');

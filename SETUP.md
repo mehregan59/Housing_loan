@@ -63,3 +63,7 @@ The seven-day expiry is refreshed on demand by `/run` or a due weekly report, no
 ## Upgrade private access-request buttons
 
 Deploy the updated complete `supabase/functions/telegram/index.ts` through Supabase → Edge Functions → telegram → Code, replacing the existing file and clicking Deploy. Keep legacy JWT verification off and preserve the existing secrets and webhook. No SQL migration is required for this access-request upgrade. It works independently of the staged shared-cache upgrade. Test `/start` from an unapproved account, tap Request access, and approve/decline from the configured administrator's private bot chat. Approved accounts start free and must accept the notice. These tests make no OpenAI call.
+
+## Administrator unlimited weekly reports
+
+After 002, apply `supabase/migrations/003_admin_quota.sql` once in SQL Editor. Deploy the updated `supabase/functions/telegram/index.ts`. Send `/quota` in your private administrator bot chat; it binds the exemption to your existing `ADMIN_USER_ID` secret and shows no weekly report limit. No new secret or committed personal ID is required. The administrator still cannot bypass the monthly budget, one-active-job protection or unknown-usage pause. Before the SQL migration the updated webhook works normally, but the administrator still has the existing weekly quota.

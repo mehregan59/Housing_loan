@@ -42,6 +42,7 @@ globalThis.fetch=async(url,options={})=>{
     if(url.endsWith('/sendMessage')) messages.push(JSON.parse(options.body));
     return Response.json({ok:true});
   }
+  if(url.startsWith('https://db.test/rest/v1/bot_control')) return Response.json([{}]);
   assert.ok(url.startsWith('https://db.test/rest/v1/bot_users'), 'No paid or dispatch endpoint allowed');
   if(options.method==='PATCH') user={...user,...JSON.parse(options.body)};
   return Response.json([structuredClone(user)]);
@@ -77,6 +78,7 @@ console.log('Webhook button/input/cancel flow passed without external calls');
 
 // Private access requests and admin decisions: no real messages, database, or API calls.
 const users=new Map([[123,structuredClone(user)]]);
+let control={id:1,admin_user_id:null};
 let failAdminNotification=false;
 globalThis.fetch=async(address,options={})=>{
   if(address.startsWith('https://api.telegram.org/')) {
@@ -88,6 +90,10 @@ globalThis.fetch=async(address,options={})=>{
     return Response.json({ok:true});
   }
   const parsed=new URL(address);
+  if(parsed.pathname==='/rest/v1/bot_control') {
+    if(options.method==='PATCH') control={...control,...JSON.parse(options.body)};
+    return Response.json([structuredClone(control)]);
+  }
   assert.equal(parsed.pathname,'/rest/v1/bot_users','Access must never dispatch paid work');
   const id=Number((parsed.searchParams.get('user_id')||'eq.0').slice(3));
   if(options.method==='GET') return Response.json(users.has(id)?[structuredClone(users.get(id))]:[]);
@@ -155,3 +161,8 @@ failAdminNotification=false;
 await sendAs(900,'request_access',true);
 assert.equal(users.get(900).settings._access.status,'pending');
 console.log('Private requests, admin-only decisions, free defaults, cooldown and stale buttons passed');
+assert.equal(control.admin_user_id,123,'Only configured administrator bound to quota exemption');
+await sendAs(123,'/settings');
+assert.match(messages.at(-1).text,/Administrator — no weekly report limit/);
+await sendAs(456,'/start');
+assert.equal(control.admin_user_id,123,'Applicant cannot change administrator quota identity');

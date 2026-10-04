@@ -30,7 +30,7 @@ No always-running laptop is required. The legacy worker uses `gpt-6-astra`. The 
 - `/disclaimer`: estimates and data-use notice.
 - `/support QUESTION`: forward question and Telegram ID to administrator; manual response, no AI cost.
 
-Free membership permits one analysis/week, paid seven. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. The pilot initially approves only the configured administrator, without committing their ID. Admin commands: `/approve ID`, `/plan ID free|paid`, `/reply ID MESSAGE`, `/cost`, `/channel on|off`. Optional channel/group posting shares only the admin's reports and requires a GitHub `CHANNEL_ID` secret and bot posting permissions. Payments are not collected automatically during this pilot.
+Free membership permits one analysis/week, paid seven. The configured administrator has no weekly report quota after migration 003 and the next private bot interaction; the monthly spending cap, approval, uncertainty pause and one-active-job protection still apply. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. The pilot initially approves only the configured administrator, without committing their ID. Admin commands: `/approve ID`, `/plan ID free|paid`, `/reply ID MESSAGE`, `/cost`, `/channel on|off`. Optional channel/group posting shares only the admin's reports and requires a GitHub `CHANNEL_ID` secret and bot posting permissions. Payments are not collected automatically during this pilot.
 
 Schedules are checked hourly at minute 17 UTC. Delivery can be up to an hour later plus GitHub queue delay; due slots can catch up within 24 hours. Local timezones use DST rules. GitHub scheduled workflows in public repositories can be disabled after 60 days without repository activity; watch the Actions page. Database health checks do not remove that GitHub limitation.
 
@@ -80,3 +80,7 @@ Only an administrator can send `/plan ID paid` to allow seven reports/week, or `
 ## Shared-research upgrade
 
 See the staged upgrade steps at the end of [SETUP.md](SETUP.md). Migration 002 preserves existing settings, reports and permissions and leaves `research_v2=false`. Do not rerun migration 001. No paid test is performed by applying the migration.
+
+## Administrator weekly quota exemption
+
+Apply `supabase/migrations/003_admin_quota.sql` once after 002, and deploy the latest webhook file. The next private administrator interaction binds `bot_control.admin_user_id` from the existing `ADMIN_USER_ID` secret; no identifier is committed. `/settings` and `/quota` then show unlimited weekly administrator reports. Ordinary accounts cannot configure this identity or gain an exemption through plan/settings commands. Cached or fresh administrator requests still obey the monthly budget and serial-run protection.
