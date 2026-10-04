@@ -187,7 +187,7 @@ def analyse(db,job,meter):
             report,urls=partial_report(pool,s,row['created_at'])
             return report,urls,False
     # Re-sort previously seen homes after new homes; keep them rather than inventing replacements.
-    signature=hashlib.sha256(json.dumps({'renderer_version':5,'settings':s,'pool':row['payload'],'checked':row['created_at'],'rates':rates},sort_keys=True).encode()).hexdigest()
+    signature=hashlib.sha256(json.dumps({'renderer_version':6,'settings':s,'pool':row['payload'],'checked':row['created_at'],'rates':rates},sort_keys=True).encode()).hexdigest()
     meter['report_signature']=signature
     previous_reports=db.request('GET',f'bot_jobs?user_id=eq.{job["user_id"]}&status=eq.complete&order=finished_at.desc&limit=1&select=report,usage')
     if previous_reports and (previous_reports[0].get('usage') or {}).get('report_signature')==signature and previous_reports[0].get('report'):

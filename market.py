@@ -176,7 +176,28 @@ def choose_pool(rows,s,now):
             gap=distance(center,point(place))
             if gap<=5 and gap+float(s['radius_km'])+1<=r['radius_km']:
                 candidates.append((r['radius_km'],r,point(place)))
-    return min(candidates,key=lambda x:x[0])[1:] if candidates else (None,None)
+    if not candidates: return None,None
+    _,anchor,center=min(candidates,key=lambda x:x[0])
+    # A larger-radius search must not hide listings saved in smaller nearby pools.
+    related=[r for r in rows if fresh(r,now) and point(r['payload']['center'])
+             and distance(point(r['payload']['center']),center)<=5]
+    related.sort(key=lambda r:r['created_at'],reverse=True)
+    listings=[]; places=[]; urls=set(); place_keys=set(); contributors=[]
+    for r in related:
+        contributed=False
+        for x in r['payload']['listings']:
+            if x['url'] in urls: continue
+            urls.add(x['url']);listings.append(x);contributed=True
+        for p in r['payload']['places']:
+            key=(location_norm(p['name']),p.get('lat'),p.get('lon'))
+            if key not in place_keys: place_keys.add(key);places.append(p)
+        if contributed: contributors.append(r)
+    if not contributors: return anchor,center
+    combined=dict(anchor,payload={**anchor['payload'],'listings':listings,'places':places,
+        'research_partial':any(r['payload'].get('research_partial',False) for r in contributors)},
+        created_at=min(r['created_at'] for r in contributors),
+        expires_at=min(r['expires_at'] for r in contributors))
+    return combined,center
 
 
 # Official rate verified 2026-10-04; time-bounded fallback for missing extraction.

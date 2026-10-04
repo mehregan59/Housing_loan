@@ -95,6 +95,23 @@ class MarketTests(unittest.TestCase):
         self.assertIsNone(market.choose_pool([r],s,NOW)[0])
         self.assertIsNone(market.choose_pool([row()],{**S,'location':'Unknown'},NOW)[0])
 
+    def test_large_radius_combines_small_and_large_saved_pools(self):
+        small=row();small['payload']['listings']=[listing(url=SOURCE+str(i)) for i in range(4)]
+        large=row();large['radius_km']=155;large['payload']['listings']=[listing(url=SOURCE+'4')]
+        combined,center=market.choose_pool([large,small],{**S,'radius_km':150},NOW)
+        self.assertEqual(len(combined['payload']['listings']),5)
+        text,urls=market.render(combined['payload'],{**S,'radius_km':150},R,center,NOW.isoformat(),True)
+        self.assertEqual(len(urls),5)
+        self.assertEqual(len(large['payload']['listings']),1)
+
+    def test_combining_pools_deduplicates_and_ignores_expired_or_distant(self):
+        large=row();large['radius_km']=155
+        duplicate=row()
+        expired=row();expired['expires_at']=(NOW-timedelta(days=1)).isoformat();expired['payload']['listings']=[listing(url=SOURCE+'expired')]
+        distant=row();distant['payload']['center']['lat']=50;distant['payload']['listings']=[listing(url=SOURCE+'distant')]
+        combined,_=market.choose_pool([large,duplicate,expired,distant],{**S,'radius_km':150},NOW)
+        self.assertEqual(len(combined['payload']['listings']),1)
+
     def test_expired_cache_not_reused(self):
         r=row();r['expires_at']=(NOW-timedelta(seconds=1)).isoformat()
         self.assertIsNone(market.choose_pool([r],S,NOW)[0])
@@ -244,8 +261,8 @@ class MarketTests(unittest.TestCase):
 
     def test_same_settings_and_data_return_previous_report(self):
         import hashlib,json
-        pr=row()
-        signature=hashlib.sha256(json.dumps({'renderer_version':5,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
+        pr=market.choose_pool([row()],S,NOW)[0]
+        signature=hashlib.sha256(json.dumps({'renderer_version':6,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
         db=Mock();db.request.side_effect=[[row('rates')],[pr],[{'report':'Previous report','usage':{'report_signature':signature}}]]
         meter={'pending':False,'cost':0,'calls':[]}
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
