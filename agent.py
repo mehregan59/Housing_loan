@@ -201,10 +201,10 @@ def run_job(db, job_id):
             pass
     ledger = db.request('GET', 'bot_jobs?created_at=gte.'+datetime.now(timezone.utc).strftime('%Y-%m-01T00:00:00Z')+'&select=charged_usd,reserved_usd')
     total = sum(float(x['charged_usd'] if x['charged_usd'] is not None else x['reserved_usd']) for x in ledger)
-    db.admin(f"💳 Job {job_id}\nStatus: {status}\nEstimated API cost: "+
+    db.admin(f"💳 Administrator only — API spending\nAnalysis status: {status}\nEstimated cost of this report: "+
         (f"${cost:.4f}" if cost is not None else 'unknown; reservation retained and analyses paused for review')+
-        f"\nMonthly estimate/reservations: ${total:.2f} / $8 configured cap\n"+
-        f"Searches: {usage.get('search_calls','unknown')} | Input/output tokens: {usage.get('input_tokens','unknown')}/{usage.get('output_tokens','unknown')}\nHosting/tax/FX are separate; reconcile with OpenAI billing.")
+        f"\nThis month, including pending reports: ${total:.2f} / $8 budget\n"+
+        f"Ordinary users do not receive this message.\nEstimate only; check OpenAI billing. Hosting, tax and currency conversion are separate.\nReference: {job_id}")
 
 
 def sweep(db):
