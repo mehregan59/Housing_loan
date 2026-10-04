@@ -159,6 +159,7 @@ def analyse(db,job,meter):
         saved=db.rpc('bot_shared_get',{'p_settings':s})
         if saved:
             meter['shared_hit']=True
+            meter['data_expires_at']=saved.get('expires_at')
             meter['partial']=saved['report'].startswith(('⚠️ Partial research','⚠️ Teilrecherche'))
             return saved['report'],saved['urls'],True
     # A single control lock reserves a fresh research budget; Actions serializes workers.
@@ -268,8 +269,12 @@ def analyse(db,job,meter):
                  'sites':['immobilienscout24.de','immowelt.de','kleinanzeigen.de','ohne-makler.net','local agents'],
                  'exclude_urls':known+[x['url'] for x in pending],
                  'nearby_towns':[p['name'] for p in (inherited or {}).get('places',[])],
-                 'target_new_links':60},ensure_ascii=False)
-            task+='\nDISCOVERY ONLY: Search portal result pages and multiple nearby municipalities across the radius. Collect up to 60 distinct individual apartment-for-sale URLs visible in retrieved search sources. Do not open individual apartment pages or extract full details yet. No mortgage/benchmark/coordinate research. Exclude already collected URLs. Skip category pages, houses, rentals and auctions identifiable in search results. Titles and towns are hints, not verified facts. Keep strings short. Finish valid JSON; never invent URLs.'
+                 'numerical_search_limits':market.search_scope(s),
+                 'search_queries':[f'Wohnung kaufen {s["location"]} bis {market.search_scope(s)["max_price_eur"]:g} Euro ab {s["min_size_m2"]:g} m²',
+                                   f'Eigentumswohnung kaufen Umgebung {s["location"]} {radius:g} km',
+                                   f'vermietete Wohnung kaufen {s["location"]}'],
+                 'collection_goal':'as many distinct relevant URLs as the bounded search and output allow'},ensure_ascii=False)
+            task+='\nDISCOVERY ONLY: Search portal result pages and multiple nearby municipalities across the radius. Collect as many distinct individual apartment-for-sale URLs as possible from retrieved sources within the output budget. Use the numerical_search_limits to target price and minimum size in portal filters and search queries. Try different nearby towns, portals and query wording when results repeat. Do not reject a link merely because its price or size is unknown in the snippet. Do not impose an arbitrary result-count target. Do not open individual apartment pages or extract full details yet. No mortgage/benchmark/coordinate research. Exclude already collected URLs. Skip category pages, houses, rentals and auctions identifiable in search results. Titles and towns are hints, not verified facts. Keep strings short. Finish valid JSON; never invent URLs.'
             try:
                 leads=extract('links',task,LEAD_SCHEMA,4,3000)
             except ResearchDataError as exc:
@@ -279,17 +284,28 @@ def analyse(db,job,meter):
             if leads is not None: pending=merge_leads(pending,leads,excluded=known)
         pool=None
         completed_batches=attempted_batches=0
-        for batch in range(4):
-            if not pending: break
+        remaining_tools=25-sum(max(4,x.get('search_calls',0)) for x in meter['calls'] if x.get('stage')=='links')
+        stop_reason='queue_exhausted'
+        while pending:
+            if remaining_tools<=0:
+                stop_reason='tool_budget'
+                break
             if meter['cost']>=0.80:
+                stop_reason='cost_guard'
                 meter.setdefault('warnings',[]).append('ExpansionStoppedAtCostGuard')
                 break
-            selected=pending[:5]
             verified_pool=pool or inherited
+            coordinate_allowance=0 if verified_pool else 1
+            size=min(5,remaining_tools-coordinate_allowance)
+            if size<=0:
+                stop_reason='tool_budget'
+                break
+            selected=pending[:size]
             prompt=detail_prompt(s,radius,now,selected,verified_pool)
             try:
                 attempted_batches+=1
-                extra=extract('pool',prompt,DISCOVERY_SCHEMA,5 if verified_pool else 6,4000,verified_pool)
+                extra=extract('pool',prompt,DISCOVERY_SCHEMA,size+coordinate_allowance,4000,verified_pool)
+                remaining_tools-=max(size+coordinate_allowance,meter['calls'][-1].get('search_calls',0))
             except ResearchDataError as exc:
                 if pool is None or meter['pending']: raise
                 meter.setdefault('warnings',[]).append('Extraction'+exc.code)
@@ -319,10 +335,11 @@ def analyse(db,job,meter):
         if supplement:
             pool={**merge_listing_batches(supplement['payload'],pool),'retained_expires_at':supplement['expires_at'],'oldest_researched_at':supplement['created_at']}
             if market.point(pool['center']) is None: pool['center']=supplement['payload']['center']
-        pool['discovery_batches']={'planned':4,'attempted':attempted_batches,'completed':completed_batches}
+        pool['discovery_batches']={'planned':attempted_batches,'attempted':attempted_batches,'completed':completed_batches}
         pool['pending_leads']=merge_leads(pending,excluded=[x['url'] for x in pool['listings']])
         pool['attempted_lead_urls']=attempted_urls
-        pool['collection_stats']={'queued':len(pool['pending_leads']),'verified':len(pool['listings'])}
+        pool['collection_stats']={'queued':len(pool['pending_leads']),'verified':len(pool['listings']),'stop_reason':stop_reason}
+        pool['search_scope']=market.search_scope(s)
         row=save(key,'pool',pool,radius);center=market.point(pool['center'])
         if center is None:
             meter['partial']=True
@@ -332,6 +349,7 @@ def analyse(db,job,meter):
     signature=hashlib.sha256(json.dumps({'renderer_version':9,'settings':s,'pool':row['payload'],'checked':row['created_at'],'rates':rates},sort_keys=True).encode()).hexdigest()
     meter['report_signature']=signature
     meter['collection_stats']=row['payload'].get('collection_stats',{})
+    meter['data_expires_at']=row['expires_at']
     previous_reports=db.request('GET',f'bot_jobs?user_id=eq.{job["user_id"]}&status=eq.complete&order=finished_at.desc&limit=1&select=report,usage')
     if previous_reports and (previous_reports[0].get('usage') or {}).get('report_signature')==signature and previous_reports[0].get('report'):
         meter['shared_hit']=True

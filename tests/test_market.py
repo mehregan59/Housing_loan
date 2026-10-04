@@ -118,9 +118,10 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(len(kept),1)
         self.assertIsNone(kept[0]['owner_cost_monthly']['value'])
 
-    def test_cache_key_does_not_include_finances_or_language(self):
+    def test_cache_key_uses_discovery_scope_but_not_language(self):
         changed={**S,'max_price_eur':100000,'equity_eur':10000,'language':'de'}
-        self.assertEqual(market.cache_key('pool',S),market.cache_key('pool',changed))
+        self.assertNotEqual(market.cache_key('pool',S),market.cache_key('pool',changed))
+        self.assertEqual(market.cache_key('pool',S),market.cache_key('pool',{**S,'language':'fa'}))
         self.assertEqual(market.cache_key('rates',S),market.cache_key('rates',changed))
         self.assertNotEqual(market.cache_key('rates',S),market.cache_key('rates',{**S,'fixed_rate_years':15}))
 
@@ -418,11 +419,11 @@ class MarketTests(unittest.TestCase):
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI',return_value=client):
             dt.now.return_value=NOW
             report,shown,_=research.analyse(db,{'id':'job','settings':S,'user_id':123,'force_refresh':True},meter)
-        self.assertEqual(client.responses.create.call_count,5)
-        self.assertEqual(len(shown),5)
+        self.assertEqual(client.responses.create.call_count,6)
+        self.assertEqual(len(shown),6)
         self.assertIn('Partial research',report);self.assertIn('PoolOutputLimitPartial',meter['warnings'])
         saved=[c.args[2] for c in db.request.call_args_list if c.args[0]=='POST'][-1]['payload']
-        self.assertEqual(len(saved['pending_leads']),6)
+        self.assertEqual(len(saved['pending_leads']),5)
 
     def test_batch_towns_and_dedup_preserve_every_property(self):
         import json
@@ -477,10 +478,23 @@ class MarketTests(unittest.TestCase):
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI',return_value=client):
             dt.now.return_value=NOW
             report,shown,_=research.analyse(db,{'id':'job','settings':S,'user_id':123,'force_refresh':True},meter)
-        self.assertEqual(client.responses.create.call_count,4)
+        self.assertEqual(client.responses.create.call_count,5)
         self.assertTrue(all(c.kwargs['text']['format']['name']=='pool' for c in client.responses.create.call_args_list))
-        self.assertEqual(len(shown),21)
-        self.assertIn('10 discovered links await',report)
+        self.assertEqual(len(shown),26)
+        self.assertIn('5 discovered links await',report)
+
+    def test_narrower_pool_cannot_satisfy_broader_search(self):
+        narrow=row();narrow['payload']['search_scope']={'max_price_eur':100000,'min_size_m2':50}
+        self.assertIsNone(market.choose_pool([narrow],S,NOW)[0])
+        self.assertIsNotNone(market.choose_pool([narrow],{**S,'max_price_eur':90000,'min_size_m2':55},NOW)[0])
+        client=fake_collection_api([SOURCE+'new']);db=collection_database();meter={'pending':False,'cost':0,'calls':[]}
+        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI',return_value=client):
+            dt.now.return_value=NOW
+            research.analyse(db,{'id':'job','settings':S,'user_id':123},meter)
+        import json
+        task=json.loads(client.responses.create.call_args_list[0].kwargs['input'].split('\n')[0])
+        self.assertEqual(task['numerical_search_limits'],market.search_scope(S))
+        self.assertNotIn('target_new_links',task)
 
     def test_tracking_url_deduplication(self):
         self.assertEqual(market.url(SOURCE+'?utm_source=test'),SOURCE)

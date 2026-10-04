@@ -152,11 +152,22 @@ def validate_rates(data,sources,now):
             'note':'Two recent nominal-rate sources required; effective APR is not a contractual interest rate.'}
 
 
+def search_scope(settings):
+    # Even before side costs, a price above loan+equity cannot be financed.
+    return {'max_price_eur':min(settings['max_price_eur'],settings['max_loan_eur']+settings['equity_eur']),
+            'min_size_m2':settings['min_size_m2']}
+
+
+def scope_covers(scope,settings):
+    requested=search_scope(settings)
+    return not scope or (scope['max_price_eur']>=requested['max_price_eur'] and scope['min_size_m2']<=requested['min_size_m2'])
+
+
 def cache_key(kind,s):
     v={'version':VERSION,'country':s.get('country','Germany')}
     if kind=='rates': v['years']=s['fixed_rate_years']
     else:
-        v.update(location=norm(s['location']),radius=math.ceil(float(s['radius_km'])/25)*25+5)
+        v.update(location=norm(s['location']),radius=math.ceil(float(s['radius_km'])/25)*25+5,scope=search_scope(s))
     return kind+':'+hashlib.sha256(json.dumps(v,sort_keys=True).encode()).hexdigest()
 
 
@@ -171,6 +182,7 @@ def choose_pool(rows,s,now):
     for r in rows:
         if not fresh(r,now): continue
         p=r['payload']; center=point(p['center'])
+        if not scope_covers(p.get('search_scope'),s): continue
         if center is None: continue
         for place in p['places']:
             if location_norm(place['name'])!=location_norm(s['location']) or not point(place): continue

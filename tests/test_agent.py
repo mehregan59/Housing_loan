@@ -45,6 +45,22 @@ class Tests(unittest.TestCase):
             result=agent.notify_guide_users(db)
         self.assertEqual(result,{'delivered':0,'skipped':3,'failed':1})
 
+    def test_seven_day_cleanup_scrubs_property_evidence_preserves_ledger(self):
+        db=Mock();job={'id':'00000000-0000-4000-8000-000000000001','usage':{'checkpoints':[{'extracted':{'listings':['private saved evidence']}}],'research_calls':[{'input_tokens':25}],'report_signature':'hash','data_expires_at':'2026-10-01T00:00:00+00:00'}}
+        def request(method,path,data=None):
+            if method=='GET' and 'created_at=' in path and 'id=gt.' not in path:return [job]
+            return [] if method=='GET' else None
+        db.request.side_effect=request
+        agent.cleanup_apartment_data(db,datetime(2026,10,4,12,tzinfo=timezone.utc))
+        deletes=[c.args[1] for c in db.request.call_args_list if c.args[0]=='DELETE']
+        self.assertTrue(any('bot_market_cache?expires_at=lte.' in x for x in deletes))
+        self.assertTrue(any('bot_seen?evaluated_at=lte.2026-09-27' in x for x in deletes))
+        patch_data=[c.args[2] for c in db.request.call_args_list if c.args[0]=='PATCH'][0]
+        self.assertIsNone(patch_data['report']);self.assertNotIn('checkpoints',patch_data['usage'])
+        self.assertEqual(patch_data['usage']['research_calls'],[{'input_tokens':25}])
+        self.assertNotIn('charged_usd',patch_data)
+        self.assertFalse(any('bot_users' in x or 'bot_jobs' in x for x in deletes))
+
     def test_unverified_listing_rejected(self):
         with self.assertRaises(ValueError):
             agent.parse_report('Report\n---URLS---\nhttps://fake.example/1', {'https://real.example/1'})

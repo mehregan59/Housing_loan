@@ -204,7 +204,7 @@ def run_job(db, job_id):
             report, urls, cache_hit = analyse(db, job, meter)
             cost = round(meter['cost'],6)
             usage = {'pipeline':2, 'cache_hit':cache_hit, 'research_calls':meter['calls'], 'report_signature':meter.get('report_signature'), 'shared_hit':meter.get('shared_hit',False), 'shared_publish_failed':meter.get('shared_publish_failed',False)}
-            usage.update(collection_stats=meter.get('collection_stats',{}),partial=meter.get('partial',False),warnings=meter.get('warnings',[]),checkpoints=meter.get('checkpoints',[]),stage=meter.get('stage'))
+            usage.update(data_expires_at=meter.get('data_expires_at'),collection_stats=meter.get('collection_stats',{}),partial=meter.get('partial',False),warnings=meter.get('warnings',[]),checkpoints=meter.get('checkpoints',[]),stage=meter.get('stage'))
             status = 'complete'
         else:
             raise ResearchUpgradeInactive()
@@ -315,14 +315,38 @@ def notify_guide_users(db):
     return {'delivered':delivered,'skipped':skipped,'failed':failed}
 
 
+def cleanup_apartment_data(db,now=None):
+    """Remove public apartment data; preserve cost/usage ledger and user settings."""
+    now=now or datetime.now(timezone.utc)
+    cutoff=timestamp_filter(now-timedelta(days=7));current=timestamp_filter(now)
+    db.request('DELETE','bot_market_cache?expires_at=lte.'+current)
+    db.request('DELETE','bot_shared_reports?expires_at=lte.'+current)
+    db.request('DELETE','bot_seen?evaluated_at=lte.'+cutoff)
+    # Older jobs remain as lightweight financial records. Scrub report and raw
+    # property evidence without deleting the spending needed for the monthly cap.
+    for condition in ('created_at=lte.'+cutoff,'usage->>data_expires_at=lte.'+current):
+        cursor=''
+        while True:
+            rows=db.request('GET','bot_jobs?status=in.(complete,failed,uncertain)&'+condition+'&select=id,usage&order=id&limit=100'+cursor)
+            if not rows: break
+            for job in rows:
+                usage=dict(job.get('usage') or {})
+                usage.pop('checkpoints',None)
+                usage.pop('data_expires_at',None)
+                db.request('PATCH','bot_jobs?id=eq.'+job['id'],{'report':None,'usage':usage})
+            cursor='&id=gt.'+rows[-1]['id']
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('mode', choices=['sweep','job','health','guide-all'])
+    p.add_argument('mode', choices=['sweep','job','health','guide-all','cleanup'])
     p.add_argument('--job-id')
     args = p.parse_args()
     db = Backend()
     try:
-        if args.mode == 'guide-all':
+        if args.mode == 'cleanup':
+            cleanup_apartment_data(db)
+        elif args.mode == 'guide-all':
             notify_guide_users(db)
         elif args.mode == 'health':
             # PATCH then insert avoids repeated PK conflicts and keeps only one health row.
@@ -335,7 +359,7 @@ def main():
             db.request('DELETE','bot_updates?created_at=lt.'+timestamp_filter(datetime.now(timezone.utc)-timedelta(days=30)))
             control = db.request('GET','bot_control?id=eq.1')[0]
             if control.get('research_v2'):
-                db.request('DELETE','bot_market_cache?expires_at=lt.'+timestamp_filter(datetime.now(timezone.utc)-timedelta(days=30)))
+                db.request('DELETE','bot_market_cache?expires_at=lt.'+timestamp_filter(datetime.now(timezone.utc)))
             if control.get('shared_reports_enabled'):
                 db.request('DELETE','bot_shared_reports?expires_at=lt.'+timestamp_filter(datetime.now(timezone.utc)))
         elif args.mode == 'job':

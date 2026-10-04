@@ -317,6 +317,7 @@ async function reportHash(report:string) {
   return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,12);
 }
 async function sendReport(id:number,report:string,source:string,language:string) {
+  if(!report) { await reply(id,language==='fa'?'این گزارش منقضی شده است. داده‌های آپارتمان پس از هفت روز پاک می‌شوند.':language==='de'?'Dieser Bericht ist abgelaufen. Wohnungsdaten werden nach sieben Tagen gelöscht.':'This report has expired. Apartment data is removed after seven days.'); return; }
   const view=splitReport(report);
   if(!view.cards.length) return reply(id,report);
   for(let i=0;i<Math.ceil(view.cards.length/5);i++) {
