@@ -124,6 +124,39 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(''.join(parts),text)
         self.assertTrue(all(len(x.encode('utf-16-le'))//2<=3900 for x in parts))
 
+    def test_persian_report_localised_without_altering_financial_values(self):
+        text,urls=market.render(pool(),{**S,'language':'fa'},R,(48,7.85),NOW.isoformat(),True)
+        self.assertIn('وام مورد نیاز برآوردی',text)
+        self.assertIn('€165,855',text)
+        self.assertIn('نرخ ثابت 10 ساله',text)
+        self.assertIn('مشاوره مالی',text)
+        self.assertNotIn('Estimated loan needed',text)
+        self.assertEqual(urls,[SOURCE])
+
+    def test_admin_refresh_bypasses_reports_and_appends_new_listing(self):
+        import json
+        old=row();new=pool([listing(url=SOURCE+'new')])
+        db=Mock()
+        def database(method,path,data=None):
+            if method!='GET': return None
+            if path.startswith('bot_market_cache?cache_key=eq.rates'): return [row('rates')]
+            if path.startswith('bot_market_cache?kind=eq.pool'): return [old]
+            if path.startswith('bot_market_cache?cache_key=eq.pool'): return [old]
+            return []
+        db.request.side_effect=database;db.rpc.return_value=True
+        response=Mock();response.output_text=json.dumps(new)
+        response.model_dump.return_value={'status':'completed','usage':{'input_tokens':1000,'output_tokens':400},'output':[{'type':'web_search_call','action':{'type':'open_page','url':SOURCE+'new','sources':[{'url':GEO},{'url':TAX}]}}]}
+        meter={'pending':False,'cost':0,'calls':[]}
+        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
+            dt.now.return_value=NOW;api.return_value.responses.create.return_value=response
+            text,urls,hit=research.analyse(db,{'id':'job','user_id':123,'settings':S,'force_refresh':True,'shared_reports_enabled':True},meter)
+        self.assertEqual(set(urls),{SOURCE,SOURCE+'new'})
+        self.assertEqual(api.return_value.responses.create.call_count,1)
+        self.assertNotIn('bot_shared_get',[c.args[0] for c in db.rpc.call_args_list])
+        self.assertIn('already_collected_urls',api.return_value.responses.create.call_args.kwargs['input'])
+        saved=[c.args[2] for c in db.request.call_args_list if c.args[0]=='POST' and c.args[1]=='bot_market_cache'][0]
+        self.assertEqual(saved['expires_at'],old['expires_at'])
+
     def test_expired_cache_not_reused(self):
         r=row();r['expires_at']=(NOW-timedelta(seconds=1)).isoformat()
         self.assertIsNone(market.choose_pool([r],S,NOW)[0])
@@ -233,7 +266,7 @@ class MarketTests(unittest.TestCase):
 
     def test_second_call_timeout_retains_unknown_usage(self):
         db=Mock();db.rpc.side_effect=[{'id':'job','research_v2':True,'settings':S,'user_id':123},None]
-        db.request.side_effect=[[{'charged_usd':None,'reserved_usd':1}]]
+        db.request.side_effect=[[],[{'charged_usd':None,'reserved_usd':1}]]
         def partial(db,job,meter):
             meter.update(cost=.1,pending=True,calls=[{'model':'gpt-6.1-sol'}]);raise TimeoutError()
         with patch('research.analyse',side_effect=partial),patch.dict('os.environ',{'ADMIN_USER_ID':'123'}): agent.run_job(db,'job')
@@ -242,7 +275,7 @@ class MarketTests(unittest.TestCase):
 
     def test_cached_success_settles_zero_and_admin_only_cost(self):
         db=Mock();db.rpc.side_effect=[{'id':'job','research_v2':True,'settings':S,'user_id':456},None]
-        db.request.side_effect=[None,[{'channel_enabled':False}],[{'charged_usd':0,'reserved_usd':0}]]
+        db.request.side_effect=[[],None,[{'channel_enabled':False}],[{'charged_usd':0,'reserved_usd':0}]]
         with patch('research.analyse',return_value=('Saved report',[],True)),patch.dict('os.environ',{'ADMIN_USER_ID':'123'}): agent.run_job(db,'job')
         args=db.rpc.call_args_list[1].args[1]
         self.assertEqual(args['p_cost'],0);self.assertEqual(args['p_status'],'complete')
@@ -275,7 +308,7 @@ class MarketTests(unittest.TestCase):
     def test_same_settings_and_data_return_previous_report(self):
         import hashlib,json
         pr=market.choose_pool([row()],S,NOW)[0]
-        signature=hashlib.sha256(json.dumps({'renderer_version':7,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
+        signature=hashlib.sha256(json.dumps({'renderer_version':8,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
         db=Mock();db.request.side_effect=[[row('rates')],[pr],[{'report':'Previous report','usage':{'report_signature':signature}}]]
         meter={'pending':False,'cost':0,'calls':[]}
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
@@ -333,7 +366,7 @@ class MarketTests(unittest.TestCase):
 
     def test_named_failure_and_evidence_are_saved_without_retry(self):
         db=Mock();db.rpc.side_effect=[{'id':'job','research_v2':True,'settings':S,'user_id':123},None]
-        db.request.side_effect=[[{'charged_usd':.1,'reserved_usd':0}]]
+        db.request.side_effect=[[],[{'charged_usd':.1,'reserved_usd':0}]]
         def failed(db,job,meter):
             meter.update(cost=.1,stage='pool',checkpoints=[{'stage':'pool','extracted':{}}])
             raise research.ResearchDataError('PoolInvalidJSON')

@@ -74,6 +74,12 @@ await send('weekly:on',true);
 assert.equal(user.weekly,true);
 await send('lang:de',true);
 assert.equal(user.settings.language,'de');
+await send('lang:fa',true);
+assert.equal(user.settings.language,'fa');
+await send('/settings');assert.match(messages.at(-1).text,/زبان گزارش: فارسی/);
+await send('/help');assert.match(messages.at(-1).text,/راهنمای ربات/);
+await send('lang:en',true);
+
 console.log('Webhook button/input/cancel flow passed without external calls');
 
 // Private access requests and admin decisions: no real messages, database, or API calls.
@@ -200,3 +206,25 @@ await sendAs(456,'/saved');assert.match(messages.at(-1).text,/No current shared 
 control.research_v2=false;
 await sendAs(456,'/run');assert.match(messages.at(-1).text,/No paid run started/);assert.equal(queueCalls,0);
 console.log('Saved retrieval bypasses quotas and queues; inactive upgrade blocks paid runs');
+
+// Refresh never bypasses administrator permission or the database budget gate.
+control.research_v2=true;
+await sendAs(456,'/refresh');
+assert.match(messages.at(-1).text,/Only the administrator/);
+assert.equal(queueCalls,0);
+const refreshFetch=globalThis.fetch;
+let refreshRequests=0;
+globalThis.fetch=async(address,options={})=>{
+  if(address.includes('/rpc/bot_enqueue')) {
+    const request=JSON.parse(options.body);
+    assert.equal(request.p_user,123);assert.match(request.p_key,/^refresh:/);
+    refreshRequests++;
+    return Response.json({error:'MonthlyBudgetExceeded'});
+  }
+  if(address.includes('/rpc/bot_saved_report')) throw new Error('Refresh must bypass saved reports');
+  return refreshFetch(address,options);
+};
+await sendAs(123,'/refresh');
+assert.equal(refreshRequests,1);
+assert.match(messages.at(-1).text,/MonthlyBudgetExceeded/);
+console.log('Persian settings/help and administrator refresh budget gate passed');

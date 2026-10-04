@@ -3,6 +3,7 @@ import hashlib
 import json
 import math
 import re
+from i18n import fa
 from datetime import datetime, timedelta, timezone, date
 from urllib.parse import urlsplit, urlunsplit
 
@@ -279,7 +280,7 @@ def screen(pool,s,rates,center):
 
 def render(pool,s,rates,center,checked_at,cache_hit):
     de=s.get('language')=='de'
-    def t(en,ger): return ger if de else en
+    def t(en,ger): return fa(en) if s.get('language')=='fa' else ger if de else en
     labels={'max_price_eur':t('purchase price','Kaufpreis'),'min_size_m2':t('minimum size','Mindestgröße'),
             'radius_km':t('search radius','Suchradius'),'max_loan_eur':t('loan limit','Kreditgrenze'),
             'max_price_per_m2':t('price per m²','Preis pro m²'),'target_gross_yield_pct':t('rental yield','Mietrendite'),

@@ -12,14 +12,37 @@ Example: /set max_price_eur 250000
 /exclude Erbpacht, Zwangsversteigerung — exclusions; "none" clears
 /schedule mon 08:00 Europe/Berlin — day, time, timezone
 /weekly on or /weekly off — automatic report
-/run — new analysis (or use the button)
+/run — analysis using saved research where available
+/refresh — administrator only: paid search for additional apartments within the spending cap
 /quota — weekly allowance
 /last — latest saved report
 /saved — existing report for your exact settings; no quota or AI cost
 /support YOUR QUESTION — contact the administrator
 /disclaimer — notice and data use
 Free: 1 report/week. Paid: up to 7. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. Manual membership during pilot. Delivery may be delayed; changing schedule does not add reports. If a report fails, use /support; repeated clicks cannot start parallel analyses.
-Editable numeric fields: max_loan_eur, equity_eur, max_price_eur, min_size_m2, radius_km, max_price_per_m2, target_gross_yield_pct, min_monthly_cashflow_eur, fixed_rate_years, repayment_pct. Optional targets accept "none". /set language en or de. Other countries will require country-specific rules in a future release.`;
+Editable numeric fields: max_loan_eur, equity_eur, max_price_eur, min_size_m2, radius_km, max_price_per_m2, target_gross_yield_pct, min_monthly_cashflow_eur, fixed_rate_years, repayment_pct. Optional targets accept "none". /set language en, de or fa. Other countries will require country-specific rules in a future release.`;
+const HELP_FA=`راهنمای ربات مسکن — آلمان
+/settings — تنظیمات؛ برای تغییر هر مورد دکمه را بزنید
+/set language fa — گزارش فارسی
+/set language en — گزارش انگلیسی
+/set language de — گزارش آلمانی
+/location Freiburg — انتخاب شهر آلمان
+/areas Freiburg, Emmendingen — شهرهای ترجیحی
+/set max_price_eur 250000 — حداکثر قیمت خرید
+/set max_loan_eur 250000 — سقف وام
+/set equity_eur 0 — آورده نقدی
+/set min_size_m2 30 — حداقل مساحت
+/set radius_km 100 — شعاع جستجو
+/run — بررسی با استفاده از داده‌های ذخیره‌شده در صورت موجود بودن
+/saved — گزارش ذخیره‌شده بدون هزینه جدید
+/last — آخرین گزارش
+/weekly on یا /weekly off — گزارش هفتگی
+/schedule mon 08:00 Europe/Berlin — زمان گزارش
+/quota — سهمیه هفتگی
+/support متن سؤال — ارسال سؤال به پشتیبانی
+/cancel — لغو ویرایش
+/refresh — فقط مدیر؛ جستجوی پولی برای آگهی‌های بیشتر در سقف بودجه
+طرح رایگان یک گزارش و طرح پولی تا هفت گزارش در هفته دارد. گزارش‌ها فقط برآورد هستند، نه مشاوره مالی یا تأیید وام. عنوان آگهی و متن ریسک منبع ممکن است به زبان اصلی باقی بماند.`;
 const MAX: Record<string, [number, number]> = {
   max_loan_eur:[0,10000000],equity_eur:[0,10000000],max_price_eur:[1,10000000],
   min_size_m2:[1,2000],radius_km:[1,500],max_price_per_m2:[1,100000],
@@ -47,6 +70,31 @@ const button=(text:string,data:string)=>({text,callback_data:data});
 const money=(v:unknown)=>new Intl.NumberFormat('en-GB',{style:'currency',currency:'EUR',maximumFractionDigits:2}).format(Number(v));
 export function settingsSummary(u:any):string {
   const s=u.settings;
+  if (s.language==='fa') {
+    const option=(key:string,unit:string)=>s[key]==null?'بدون محدودیت':unit==='EUR'?money(s[key]):s[key]+unit;
+    return `🏠 تنظیمات جستجوی ملک
+📍 ${s.location}، آلمان · شعاع ${s.radius_km} کیلومتر
+شهرهای ترجیحی: ${(s.areas||[]).join(', ')||'بدون ترجیح اضافی'}
+💶 حداکثر قیمت خرید: ${money(s.max_price_eur)}
+📐 حداقل مساحت: ${s.min_size_m2} متر مربع
+🌐 زبان گزارش: فارسی
+
+🏦 فرض‌های تأمین مالی
+حداکثر وام: ${money(s.max_loan_eur)}
+آورده نقدی: ${money(s.equity_eur)}
+دوره نرخ ثابت: ${s.fixed_rate_years} سال
+بازپرداخت اولیه سالانه: ${s.repayment_pct}%
+
+🎯 معیارهای سرمایه‌گذاری
+حداکثر قیمت هر متر مربع: ${option('max_price_per_m2','EUR')}
+بازده ناخالص اجاره: ${option('target_gross_yield_pct','%')}
+حداقل نتیجه ماهانه: ${option('min_monthly_cashflow_eur','EUR')}
+🚫 موارد مستثنا: ${(s.exclude||[]).map((x:string)=>x==='Erbpacht'?'ملک با حق اجاره زمین':x==='Zwangsversteigerung'?'مزایده توقیفی':x).join('، ')||'هیچ‌کدام'}
+📅 گزارش هفتگی: ${u.weekly?'روشن':'خاموش'}
+زمان: ${DAYS[u.schedule_day]}، ${u.schedule_time} · ${u.timezone}
+طرح: ${u.admin_unlimited?'مدیر؛ بدون سقف هفتگی':u.plan==='paid'?'اشتراک پولی؛ تا ۷ گزارش در هفته':'رایگان؛ یک گزارش در هفته'}
+برای تغییر تنظیمات دکمه‌های زیر را بزنید. هزینه‌های خرید در محاسبه وام لحاظ می‌شود؛ این تنظیمات تأیید تأمین مالی نیست.`;
+  }
   const optional=(key:string,unit:string)=>s[key]==null?'No filter set':unit==='EUR'?money(s[key]):s[key]+unit;
   const exclusions=(s.exclude||[]).map((x:string)=>x==='Erbpacht'?'Leasehold':x==='Zwangsversteigerung'?'Foreclosure auctions':x).join(', ')||'None';
   return `🏠 Your property search
@@ -54,7 +102,7 @@ export function settingsSummary(u:any):string {
 Preferred towns: ${(s.areas||[]).join(', ')||'No additional preference'}
 💶 Maximum purchase price: ${money(s.max_price_eur)}
 📐 Minimum size: ${s.min_size_m2} m²
-🌐 Report language: ${s.language==='de'?'German':'English'}
+🌐 Report language: ${s.language==='fa'?'فارسی':s.language==='de'?'German':'English'}
 
 🏦 Financing assumptions
 Maximum loan: ${money(s.max_loan_eur)}
@@ -87,7 +135,7 @@ export function parseEdit(field:string,input:string):unknown {
     if (!value || value.length>(field==='location'?100:500)) throw new Error('Enter a city name or a short list of towns.');
     return field==='location'?value:value.toLowerCase()==='none'?[]:value.split(',').map(x=>x.trim()).filter(Boolean).slice(0,15);
   }
-  if (field==='language') { if (!['en','de'].includes(value)) throw new Error('Choose English or German below.'); return value; }
+  if (field==='language') { if (!['en','de','fa'].includes(value)) throw new Error('Choose English, German or Persian below.'); return value; }
   if (field==='timezone') { try { new Intl.DateTimeFormat('en',{timeZone:value}).format(); } catch { throw new Error('Enter a timezone such as Europe/Berlin.'); } return value; }
   if (field==='schedule_time') {
     if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) throw new Error('Enter a 24-hour time, for example 08:00 or 18:30.');
@@ -295,7 +343,7 @@ Deno.serve(async req => {
     if (user.accepted_at && action.startsWith('edit:')) {
       const field=action.slice(5); if (!LABELS[field]) throw new Error('Invalid edit field');
       if (field==='language') {
-        await clearEdit(); await reply(id,'Choose your report language:',{inline_keyboard:[[button('English','lang:en'),button('Deutsch','lang:de')],[button('Cancel','cancel')]]});
+        await clearEdit(); await reply(id,'Choose your report language:',{inline_keyboard:[[button('English','lang:en'),button('Deutsch','lang:de'),button('فارسی','lang:fa')],[button('Cancel','cancel')]]});
       } else {
         await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_edit:{field,at:Date.now()}}});
         await reply(id,editPrompt(field),{inline_keyboard:[[button('Cancel','cancel')]]});
@@ -305,7 +353,7 @@ Deno.serve(async req => {
     if (user.accepted_at && action.startsWith('lang:')) {
       const language=parseEdit('language',action.slice(5)); await clearEdit();
       await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,language}});
-      await reply(id,'✅ Report language saved: '+(language==='en'?'English':'German'),settingsButtons); return new Response('ok');
+      await reply(id,'✅ Report language saved: '+(language==='fa'?'فارسی':language==='en'?'English':'German'),settingsButtons); return new Response('ok');
     }
     if (user.accepted_at && !cb && !text.startsWith('/') && user.settings._edit) {
       const pending=user.settings._edit;
@@ -338,7 +386,7 @@ Deno.serve(async req => {
       await db('PATCH','bot_users?user_id=eq.'+id,{accepted_at:new Date().toISOString()});
       await reply(id,'Welcome. Use /help to see commands. Weekly delivery is initially off; /weekly on enables it.',buttons);
     } else if (cmd==='/help') {
-      await reply(id,HELP,buttons);
+      await reply(id,user.settings.language==='fa'?HELP_FA:HELP,buttons);
     } else if (cmd==='/support') {
       if (!rest) await reply(id,'Send /support followed by your question. It is forwarded to the administrator; no AI charge. Response is manual.');
       else {
@@ -392,7 +440,7 @@ Deno.serve(async req => {
         const field = parts[0], value = parts[1];
         if (parts.length!==2) throw new Error('Use /set FIELD VALUE');
         if (field==='language') {
-          if (!['en','de'].includes(value)) throw new Error('Language must be en or de');
+          if (!['en','de','fa'].includes(value)) throw new Error('Language must be en, de or fa');
           settings[field]=value;
         } else if (OPTIONAL.has(field) && value==='none') settings[field]=null;
         else {
@@ -424,9 +472,11 @@ Deno.serve(async req => {
     } else if (cmd==='/last') {
       const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&status=eq.complete&order=finished_at.desc&limit=1&select=report');
       await reply(id,jobs.length?jobs[0].report:'No completed report yet.');
-    } else if (cmd==='/run'||cmd==='/saved') {
+    } else if (cmd==='/run'||cmd==='/saved'||cmd==='/refresh') {
+      const refresh=cmd==='/refresh';
+      if (refresh && id!==admin) { await reply(id,'Only the administrator can start additional paid research.'); return new Response('ok'); }
       const control=(await db('GET','bot_control?id=eq.1'))[0];
-      if (control?.shared_reports_enabled) {
+      if (control?.shared_reports_enabled && !refresh) {
         const saved=await db('POST','rpc/bot_saved_report',{p_user:id});
         if (saved?.report) {
           await reply(id,'📂 Saved report for your current settings. No quota used and no new AI research.');
@@ -441,11 +491,11 @@ Deno.serve(async req => {
         await reply(id,'Analysis paused until the cost-saving upgrade is activated. No paid run started. Use /last for your saved report.');
         return new Response('ok');
       }
-      const result=await db('POST','rpc/bot_enqueue',{p_user:id,p_key:'telegram:'+update.update_id});
+      const result=await db('POST','rpc/bot_enqueue',{p_user:id,p_key:(refresh?'refresh:':'telegram:')+update.update_id});
       if (result.error) await reply(id,'Analysis not started: '+result.error+'. Use /support if you need help.');
       else if (result.duplicate) await reply(id,'This request is already recorded. Use /last for the latest report.');
       else {
-        try { await dispatch(result.job_id); await reply(id,'Analysis queued. Results will arrive here; GitHub may take a few minutes.'); }
+        try { await dispatch(result.job_id); await reply(id,refresh?'Additional paid research queued within the monthly cap. Saved apartments will be retained.':'Analysis queued. Results will arrive here; GitHub may take a few minutes.'); }
         catch { await reply(id,'Request saved but immediate dispatch failed. The scheduled worker can recover it.'); await reply(admin,'⚠️ Dispatch failed. Job '+result.job_id); }
       }
     } else await reply(id,'Use /help for commands.',buttons);

@@ -69,13 +69,14 @@ def recover_complete_fields(text):
 
 def partial_report(pool,s,checked):
     de=s.get('language')=='de'
-    lines=[('⚠️ Recherche unvollständig — keine bestätigten Anlageempfehlungen' if de else '⚠️ Partial research — no confirmed investment recommendations'),
-           ('Zuletzt recherchiert: ' if de else 'Last researched: ')+checked[:10],
-           ('Standort/Radius nicht ausreichend verifiziert. Grenzen wurden nicht geändert.' if de else 'Location/radius could not be fully verified. Your limits have not been changed.')]
-    for x in pool.get('listings',[])[:5]:
+    def t(en,ger): return market.fa(en) if s.get('language')=='fa' else ger if de else en
+    lines=[t('⚠️ Partial research — no confirmed investment recommendations','⚠️ Recherche unvollständig — keine bestätigten Anlageempfehlungen'),
+           t('Last researched: ','Zuletzt recherchiert: ')+checked[:10],
+           t('Location/radius could not be fully verified. Your limits have not been changed.','Standort/Radius nicht ausreichend verifiziert. Grenzen wurden nicht geändert.')]
+    for x in pool.get('listings',[]):
         lines.extend(['\n📍 '+x['town']+' · '+x['title'][:90],f'🏷 €{x["price_eur"]:,.0f} · {x["size_m2"]:g} m²',
-                      ('🔎 Nur Recherchehinweis; Eignung und Finanzierung ungeprüft.' if de else '🔎 Research lead only; eligibility and financing are not verified.'),'🔗 '+x['url']])
-    lines.append(market.DISCLAIMER)
+                      t('🔎 Research lead only; eligibility and financing are not verified.','🔎 Nur Recherchehinweis; Eignung und Finanzierung ungeprüft.'),'🔗 '+x['url']])
+    lines.append(t(market.DISCLAIMER,'Nur Schätzungen; keine Finanzberatung oder Finanzierungszusage. Vor Entscheidungen selbst prüfen.'))
     return '\n'.join(lines),[]
 
 
@@ -86,7 +87,8 @@ def analyse(db,job,meter):
     if s.get('country','Germany')!='Germany': raise ResearchDataError('UnsupportedCountry')
     if MODEL not in ('gpt-6.1-sol','gpt-6-astra'): raise ResearchDataError('UnpricedModel')
     now=datetime.now(timezone.utc)
-    if job.get('shared_reports_enabled'):
+    force_refresh=job.get('force_refresh',False)
+    if job.get('shared_reports_enabled') and not force_refresh:
         saved=db.rpc('bot_shared_get',{'p_settings':s})
         if saved:
             meter['shared_hit']=True
@@ -151,6 +153,9 @@ def analyse(db,job,meter):
         row={'cache_key':key,'kind':kind,'version':market.VERSION,'payload':payload,
              'created_at':now.isoformat(),'expires_at':(now+timedelta(days=market.TTL_DAYS)).isoformat(),
              'radius_km':radius}
+        if kind=='pool' and payload.get('retained_expires_at'):
+            row['expires_at']=min(row['expires_at'],payload['retained_expires_at'])
+            row['created_at']=min(row['created_at'],payload['oldest_researched_at'])
         db.request('POST','bot_market_cache',row)
         return row
     rate_key=market.cache_key('rates',s)
@@ -166,28 +171,36 @@ def analyse(db,job,meter):
     pool_rows=db.request('GET','bot_market_cache?kind=eq.pool&version=eq.2&expires_at=gt.'+quote(now.isoformat(),safe='')+'&order=created_at.desc&limit=500')
     row,center=market.choose_pool(pool_rows,s,now)
     hit=row is not None
+    supplement=row if force_refresh else None
+    if force_refresh: row=None;hit=False
     if row is None:
         key=market.cache_key('pool',s); radius=math.ceil(float(s['radius_km'])/25)*25+5
         previous=db.request('GET','bot_market_cache?cache_key=eq.'+quote(key,safe=''))
-        if previous and market.fresh(previous[0],now) and market.point(previous[0]['payload']['center']) is None:
+        if not force_refresh and previous and market.fresh(previous[0],now) and market.point(previous[0]['payload']['center']) is None:
             meter['partial']=True
             report,urls=partial_report(previous[0]['payload'],s,previous[0]['created_at'])
             return report,urls,True
-        old_urls=[x['url'] for x in previous[0]['payload']['listings'][:20]] if previous else []
+        old_urls=[x['url'] for x in supplement['payload']['listings']] if supplement else [x['url'] for x in previous[0]['payload']['listings'][:20]] if previous else []
         prompt=json.dumps({'today':str(now.date()),'location':s['location'],'country':'Germany','search_radius_km':radius,
-            'target_distinct_listings':market.TARGET_LISTINGS,'refresh_these_urls_first':old_urls})
+            'target_distinct_listings':market.TARGET_LISTINGS,('already_collected_urls' if force_refresh else 'refresh_these_urls_first'):old_urls})
         prompt+='\nCollect a broad shared pool of apartments for sale, independent of investor price/loan/rent limits. Search ImmoScout24, Immowelt, Kleinanzeigen and local agents. Aim for 20 distinct apartments with verified individual-page price and size in this bounded call; stop earlier and finish valid JSON if time or token budget is tight. Never pad. Do not require optional fields to be complete. Keep every string concise (risk maximum 100 characters per language, estimate basis maximum 120); use null for unsupported optional amounts instead of spending calls on every benchmark. Diversify searches across towns and portals; use local agents when portal pages are inaccessible. Prioritise affordable apartments across multiple towns and include several price bands. Find sourced municipality coordinates for the center and listing towns. Open individual pages; reject snippet-only or removed listings. State transfer tax must have an official state source. Estimate missing rent or owner costs only with relevant cited comparable evidence; otherwise null. Owner costs exclude building reserve contributions to avoid double counting. Do not use total Hausgeld as owner-only fees. Give concise factual risks in English and German. Include municipality points to permit nearby users to reuse the pool. No analysis, scores or financial calculations.'
+        if force_refresh: prompt+='\nSearch for additional distinct apartments NOT in already_collected_urls. Do not reopen saved listings just to return the same set. Saved apartments will be retained by code.'
         pool=extract('pool',prompt,market.POOL_SCHEMA,24,14000)
         if pool is None:
             message='Suchbudget nicht verfügbar. Kein aktueller gemeinsamer Bestand deckt Ihren Standort ab. Ihre Grenzen wurden nicht geändert. Mit /last können Sie einen gespeicherten Bericht abrufen.' if s.get('language')=='de' else 'Search budget unavailable. No fresh shared listing pool covers your location. Your limits have not been changed. Try /last for a saved report.'
             return (message+'\n\n'+market.DISCLAIMER,[],False)
+        if supplement:
+            merged={x['url']:x for x in supplement['payload']['listings']}
+            merged.update({x['url']:x for x in pool['listings']})
+            pool={**pool,'listings':list(merged.values()),'places':pool['places']+supplement['payload']['places'],'retained_expires_at':supplement['expires_at'],'oldest_researched_at':supplement['created_at']}
+            if market.point(pool['center']) is None: pool['center']=supplement['payload']['center']
         row=save(key,'pool',pool,radius);center=market.point(pool['center'])
         if center is None:
             meter['partial']=True
             report,urls=partial_report(pool,s,row['created_at'])
             return report,urls,False
     # Re-sort previously seen homes after new homes; keep them rather than inventing replacements.
-    signature=hashlib.sha256(json.dumps({'renderer_version':7,'settings':s,'pool':row['payload'],'checked':row['created_at'],'rates':rates},sort_keys=True).encode()).hexdigest()
+    signature=hashlib.sha256(json.dumps({'renderer_version':8,'settings':s,'pool':row['payload'],'checked':row['created_at'],'rates':rates},sort_keys=True).encode()).hexdigest()
     meter['report_signature']=signature
     previous_reports=db.request('GET',f'bot_jobs?user_id=eq.{job["user_id"]}&status=eq.complete&order=finished_at.desc&limit=1&select=report,usage')
     if previous_reports and (previous_reports[0].get('usage') or {}).get('report_signature')==signature and previous_reports[0].get('report'):
@@ -199,6 +212,7 @@ def analyse(db,job,meter):
     if row['payload'].get('research_partial'):
         meter['partial']=True
         notice='⚠️ Teilrecherche: Nur vollständig erfasste und verifizierte Daten wurden übernommen.\n\n' if s.get('language')=='de' else '⚠️ Partial research: only fully extracted, verified data was retained.\n\n'
+        if s.get('language')=='fa': notice=market.fa(notice)
         report=notice+report
     if job.get('shared_reports_enabled'):
         # Shared version has no investor identity or previous-view history.

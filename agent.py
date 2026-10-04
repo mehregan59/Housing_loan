@@ -165,6 +165,8 @@ def run_job(db, job_id):
     try:
         if job.get('research_v2'):
             from research import analyse
+            request_rows=db.request('GET','bot_jobs?id=eq.'+job_id+'&select=request_key')
+            job['force_refresh']=str(job['user_id'])==os.environ['ADMIN_USER_ID'] and bool(request_rows) and request_rows[0].get('request_key','').startswith('refresh:')
             report, urls, cache_hit = analyse(db, job, meter)
             cost = round(meter['cost'],6)
             usage = {'pipeline':2, 'cache_hit':cache_hit, 'research_calls':meter['calls'], 'report_signature':meter.get('report_signature'), 'shared_hit':meter.get('shared_hit',False), 'shared_publish_failed':meter.get('shared_publish_failed',False)}
