@@ -278,7 +278,7 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(research.retrieved_sources({'output':[{'type':'message','url':SOURCE}]}),set())
 
     def test_second_call_timeout_retains_unknown_usage(self):
-        db=Mock();db.rpc.side_effect=[{'id':'job','research_v2':True,'settings':S,'user_id':123},None]
+        db=Mock();db.rpc.side_effect=[{'id':'job','research_v2':True,'settings':{**S,'_guide_version':1},'user_id':123},None]
         db.request.side_effect=[[],[{'charged_usd':None,'reserved_usd':1}]]
         def partial(db,job,meter):
             meter.update(cost=.1,pending=True,calls=[{'model':'gpt-6.1-sol'}]);raise TimeoutError()
@@ -287,7 +287,7 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(args['p_status'],'uncertain');self.assertIsNone(args['p_cost'])
 
     def test_cached_success_settles_zero_and_admin_only_cost(self):
-        db=Mock();db.rpc.side_effect=[{'id':'job','research_v2':True,'settings':S,'user_id':456},None]
+        db=Mock();db.rpc.side_effect=[{'id':'job','research_v2':True,'settings':{**S,'_guide_version':1},'user_id':456},None]
         db.request.side_effect=[[],None,[{'channel_enabled':False}],[{'charged_usd':0,'reserved_usd':0}]]
         with patch('research.analyse',return_value=('Saved report',[],True)),patch.dict('os.environ',{'ADMIN_USER_ID':'123'}): agent.run_job(db,'job')
         args=db.rpc.call_args_list[1].args[1]
@@ -378,7 +378,7 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(len(market.validate_pool(pool(),{SOURCE,GEO,TAX,'not a URL'},{SOURCE})['listings']),1)
 
     def test_named_failure_and_evidence_are_saved_without_retry(self):
-        db=Mock();db.rpc.side_effect=[{'id':'job','research_v2':True,'settings':S,'user_id':123},None]
+        db=Mock();db.rpc.side_effect=[{'id':'job','research_v2':True,'settings':{**S,'_guide_version':1},'user_id':123},None]
         db.request.side_effect=[[],[{'charged_usd':.1,'reserved_usd':0}]]
         def failed(db,job,meter):
             meter.update(cost=.1,stage='pool',checkpoints=[{'stage':'pool','extracted':{}}])

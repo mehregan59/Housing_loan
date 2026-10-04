@@ -1,0 +1,25 @@
+name: Notify all users about required setup guide
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: housing-guide-notice
+  cancel-in-progress: false
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Send private guide notices (no AI calls)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_USER_ID: ${{ secrets.ADMIN_USER_ID }}
+        run: python agent.py guide-all

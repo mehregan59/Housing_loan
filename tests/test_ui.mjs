@@ -33,7 +33,7 @@ console.log('Settings display and input validation checks passed');
 
 // Exercise actual webhook edit flow with fake storage and Telegram, no network/API calls.
 let user={user_id:123,approved:true,accepted_at:'2026-10-04',weekly:false,schedule_day:0,
-  schedule_time:'08:00',timezone:'Europe/Berlin',plan:'free',settings:{location:'Freiburg',country:'Germany',
+  schedule_time:'08:00',timezone:'Europe/Berlin',plan:'free',settings:{_guide_version:1,location:'Freiburg',country:'Germany',
   areas:[],exclude:[],radius_km:100,max_price_eur:250000,max_loan_eur:250000,equity_eur:0,
   min_size_m2:30,language:'en',fixed_rate_years:10,repayment_pct:2}};
 const messages=[];
@@ -301,18 +301,25 @@ for(const language of ['en','de','fa']) {
   for(let step=0;step<7;step++) {
     const guide=setupGuide(step,language,users.get(456));
     const actions=guide.keyboard.inline_keyboard.flat().map(b=>b.callback_data);
-    assert.equal(actions.includes('run'),step===6);
+    assert.equal(actions.includes('run'),false);
+    assert.equal(actions.includes('guide:complete'),step===6);
     if(language==='fa') assert.match(guide.text,/راهنما|جستجو|تأمین|معیار|گزارش|زمان|تنظیمات/);
   }
 }
+delete users.get(456).settings._guide_version;
+await sendAs(456,'/run');assert.match(messages.at(-1).text,/1\/7/);
+assert.equal(queueCalls,0);
+await sendAs(456,'guide:complete',true);assert.notEqual(users.get(456).settings._guide_version,1);
 await sendAs(456,'/guide');assert.match(messages.at(-1).text,/1\/7/);
 await sendAs(456,'guide:1',true);assert.equal(users.get(456).settings._guide_step,1);
 await sendAs(456,'edit:max_price_eur',true);
 await sendAs(456,'240000');assert.equal(users.get(456).settings.max_price_eur,240000);
 await sendAs(456,'guide:resume',true);assert.match(messages.at(-1).text,/2\/7/);
 assert.equal(users.get(456).settings._edit,undefined);
-await sendAs(456,'guide:6',true);
+await sendAs(456,'guide:6',true);assert.equal(users.get(456).settings._guide_step,2,'Cannot skip unread steps');
+for(let step=3;step<=6;step++) await sendAs(456,'guide:'+step,true);
 assert.match(messages.at(-1).text,/Review, then start/);
 assert.match(messages.at(-1).text,/240,000/);
 assert.equal(queueCalls,0);assert.equal(refreshRequests,1,'Guide never requests extra paid work');
+await sendAs(456,'guide:complete',true);assert.equal(users.get(456).settings._guide_version,1);
 console.log('Guide translations, final review, edit/resume and no-analysis navigation passed');

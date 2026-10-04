@@ -192,7 +192,7 @@ export function setupGuide(step:number,language:string,user:any) {
   if(step===3) rows.push([button(t('Edit targets','Ziele bearbeiten','ویرایش معیارها'),'menu:targets'),button(t('Exclusions','Ausschlüsse','موارد مستثنا'),'menu:exclude')]);
   if(step===4) rows.push([button(t('Formulas and help','Formeln und Hilfe','فرمول‌ها و راهنما'),'help')]);
   if(step===5) rows.push([button(t('Edit schedule','Zeitplan bearbeiten','ویرایش زمان‌بندی'),'menu:schedule')]);
-  if(step===6) rows.push([button(t('Review settings','Einstellungen prüfen','بررسی تنظیمات'),'settings'),button(t('Run with my settings','Mit Einstellungen starten','اجرا با تنظیمات من'),'run')]);
+  if(step===6) rows.push([button(t('Review settings','Einstellungen prüfen','بررسی تنظیمات'),'settings'),button(t('I understand — finish setup','Verstanden — Einrichtung abschließen','متوجه شدم — پایان تنظیمات'),'guide:complete')]);
   const navigation=[];
   if(step) navigation.push(button(t('← Previous','← Zurück','← قبلی'),'guide:'+(step-1)));
   if(step<6) navigation.push(button(t('Next →','Weiter →','بعدی →'),'guide:'+(step+1)));
@@ -437,10 +437,18 @@ Deno.serve(async req => {
       await db('PATCH','bot_users?user_id=eq.'+id,{settings:clean}); user.settings=clean;
     };
     if(user.accepted_at&&(cmd==='/guide'||action.startsWith('guide:'))) {
-      const chosen=cmd==='/guide'?0:action==='guide:resume'?(user.settings._guide_step??0):Number(action.slice(6));
+      const seen=Number(user.settings._guide_seen??-1);
+      if(action==='guide:complete' && seen>=6) {
+        await clearEdit();
+        await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_guide_version:1}});
+        await reply(id,user.settings.language==='fa'?'✅ راهنما تکمیل شد. تنظیمات را بررسی کنید؛ برای شروع تحلیل /run را بفرستید.':user.settings.language==='de'?'✅ Anleitung abgeschlossen. Einstellungen prüfen; /run startet eine Analyse.':'✅ Guide completed. Review your settings; send /run when ready to start an analysis.',buttons);
+        return new Response('ok');
+      }
+      const requested=cmd==='/guide'?0:action==='guide:resume'||action==='guide:complete'?(user.settings._guide_step??0):Number(action.slice(6));
+      const chosen=Math.max(0,Math.min(6,seen+1,Number.isFinite(requested)?requested:0));
       const guide=setupGuide(chosen,user.settings.language,user);
       await clearEdit();
-      await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_guide_step:chosen}});
+      await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_guide_step:chosen,_guide_seen:Math.max(seen,chosen)}});
       await reply(id,guide.text,guide.keyboard);
       return new Response('ok');
     }
@@ -558,6 +566,7 @@ Deno.serve(async req => {
     } else if (cmd==='/accept') {
       await db('PATCH','bot_users?user_id=eq.'+id,{accepted_at:new Date().toISOString()});
       const guide=setupGuide(0,user.settings.language,user);
+      await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_guide_step:0,_guide_seen:Math.max(0,Number(user.settings._guide_seen??-1))}});
       await reply(id,guide.text,guide.keyboard);
     } else if (cmd==='/help') {
       await reply(id,(user.settings.language==='fa'?HELP_FA:HELP)+'\n\n'+(user.settings.language==='fa'?CALCULATIONS_FA:user.settings.language==='de'?CALCULATIONS_DE:CALCULATIONS_EN),buttons);
@@ -648,6 +657,12 @@ Deno.serve(async req => {
       if(jobs.length) await sendReport(id,jobs[0].report,'j'+jobs[0].id,user.settings.language);
       else await reply(id,'No completed report yet.');
     } else if (cmd==='/run'||cmd==='/saved'||cmd==='/refresh') {
+      if(cmd!=='/saved' && user.settings._guide_version!==1) {
+        const step=Math.max(0,Math.min(6,Number(user.settings._guide_step??0)));
+        const guide=setupGuide(step,user.settings.language,user);
+        await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_guide_seen:Math.max(Number(user.settings._guide_seen??-1),step)}});
+        await reply(id,guide.text,guide.keyboard); return new Response('ok');
+      }
       const refresh=cmd==='/refresh';
       if (refresh && id!==admin) { await reply(id,'Only the administrator can start additional paid research.'); return new Response('ok'); }
       const control=(await db('GET','bot_control?id=eq.1'))[0];

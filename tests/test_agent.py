@@ -4,6 +4,47 @@ from unittest.mock import patch, Mock
 import agent
 
 class Tests(unittest.TestCase):
+    def test_required_guide_blocks_worker_without_research(self):
+        db=Mock();db.rpc.side_effect=[{'settings':{},'user_id':123,'research_v2':True},None]
+        db.request.return_value=[]
+        with patch('research.analyse') as analyse,patch.dict('os.environ',{'ADMIN_USER_ID':'123'}):
+            agent.run_job(db,'job')
+        analyse.assert_not_called()
+        settlement=db.rpc.call_args_list[1].args[1]
+        self.assertEqual(settlement['p_error'],'GuideRequired')
+        self.assertEqual(settlement['p_cost'],0)
+        self.assertIn('/guide',db.telegram.call_args.args[1])
+
+    def test_weekly_waits_for_guide_completion(self):
+        db=Mock()
+        db.request.side_effect=[[{'enabled':True}],[],[{'user_id':123,'settings':{}}],[]]
+        agent.sweep(db)
+        db.rpc.assert_not_called()
+
+    def test_guide_notice_broadcast_is_private_deduplicated_and_continues(self):
+        db=Mock()
+        users=[{'user_id':1,'approved':True,'accepted_at':'yes','settings':{'language':'fa'}},
+               {'user_id':2,'settings':{'_guide_version':1}},
+               {'user_id':3,'settings':{}}, {'user_id':4,'settings':{}}]
+        markers=set()
+        def request(method,path,data=None):
+            if path.startswith('bot_users'): return users if 'offset=0' in path else []
+            if method=='GET': return [{}] if int(path.split('eq.')[1]) in markers else []
+            markers.add(data['update_id'])
+        db.request.side_effect=request
+        def send(uid,*args):
+            if uid==3: raise RuntimeError('blocked')
+        db.telegram.side_effect=send
+        with patch('agent.time.sleep'),patch('openai.OpenAI') as api:
+            result=agent.notify_guide_users(db)
+        api.assert_not_called()
+        self.assertEqual(result,{'delivered':2,'skipped':1,'failed':1})
+        self.assertEqual(markers,{-101,-401})
+        self.assertEqual(db.telegram.call_args_list[0].args[2]['inline_keyboard'][0][0]['callback_data'],'guide:0')
+        with patch('agent.time.sleep'):
+            result=agent.notify_guide_users(db)
+        self.assertEqual(result,{'delivered':0,'skipped':3,'failed':1})
+
     def test_unverified_listing_rejected(self):
         with self.assertRaises(ValueError):
             agent.parse_report('Report\n---URLS---\nhttps://fake.example/1', {'https://real.example/1'})

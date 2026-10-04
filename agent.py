@@ -196,6 +196,8 @@ def run_job(db, job_id):
     meter = {'pending':False, 'cost':0, 'calls':[]}
     try:
         if job.get('research_v2'):
+            if job['settings'].get('_guide_version') != 1:
+                raise GuideRequired()
             from research import analyse
             request_rows=db.request('GET','bot_jobs?id=eq.'+job_id+'&select=request_key')
             job['force_refresh']=str(job['user_id'])==os.environ['ADMIN_USER_ID'] and bool(request_rows) and request_rows[0].get('request_key','').startswith('refresh:')
@@ -221,6 +223,10 @@ def run_job(db, job_id):
     finish_job(db,job,job_id,status,cost,usage,report,urls,error)
 
 
+class GuideRequired(Exception):
+    """Setup must be completed before any analysis, including scheduled work."""
+
+
 class ResearchUpgradeInactive(Exception):
     """Never silently fall back to the expensive legacy research path."""
 
@@ -240,7 +246,10 @@ def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
             db.admin('⚠️ Report saved, but delivery failed. Job '+job_id+'; use /last to retrieve it. No analysis retry.')
     else:
         try:
-            db.telegram(job['user_id'], 'Analysis paused until the cost-saving upgrade is activated. No API call was made. Use /last for your saved report.' if error=='ResearchUpgradeInactive' else '⚠️ Analysis failed. The administrator has been notified; no automatic paid retry.')
+            if error=='GuideRequired':
+                db.telegram(job['user_id'], '📖 Please complete /guide before starting an analysis. No API call was made.', {'inline_keyboard':[[{'text':'Open setup guide','callback_data':'guide:0'}]]})
+            else:
+                db.telegram(job['user_id'], 'Analysis paused until the cost-saving upgrade is activated. No API call was made. Use /last for your saved report.' if error=='ResearchUpgradeInactive' else '⚠️ Analysis failed. The administrator has been notified; no automatic paid retry.')
         except Exception:
             pass
     ledger = db.request('GET', 'bot_jobs?created_at=gte.'+datetime.now(timezone.utc).strftime('%Y-%m-01T00:00:00Z')+'&select=charged_usd,reserved_usd')
@@ -265,6 +274,8 @@ def sweep(db):
                              'p_usage':{},'p_error':'InterruptedWorker','p_urls':[]})
         db.admin('⚠️ Interrupted analysis; spending paused pending usage reconciliation. Job '+job['id'])
     for user in db.request('GET', 'bot_users?approved=eq.true&weekly=eq.true'):
+        if user.get('settings',{}).get('_guide_version') != 1:
+            continue
         slot = due_slot(user, now)
         if slot:
             db.rpc('bot_enqueue', {'p_user':user['user_id'], 'p_key':f"schedule:{user['user_id']}:{slot}"})
@@ -272,14 +283,48 @@ def sweep(db):
         run_job(db, job['id'])
 
 
+def notify_guide_users(db):
+    """Explicit, private broadcast. No OpenAI calls or report allowance used."""
+    delivered=skipped=failed=0
+    offset=0
+    while True:
+        users=db.request('GET',f'bot_users?select=user_id,settings,approved,accepted_at&order=user_id&limit=100&offset={offset}')
+        if not users: break
+        for user in users:
+            marker=-(int(user['user_id'])*100+1)
+            if user.get('settings',{}).get('_guide_version')==1 or db.request('GET',f'bot_updates?update_id=eq.{marker}'):
+                skipped+=1
+                continue
+            language=user.get('settings',{}).get('language','en')
+            text={
+                'en':'📖 Please complete the updated setup guide before your next analysis. It explains settings, calculations, missing data and costs. Weekly reports wait until you finish. Reading the guide is free and does not start a search. Tap below or send /guide.',
+                'de':'📖 Bitte die neue Einrichtungsanleitung vor der nächsten Analyse abschließen. Sie erklärt Einstellungen, Berechnungen, fehlende Daten und Kosten. Wochenberichte warten bis zum Abschluss. Die Anleitung ist kostenlos und startet keine Suche. Unten tippen oder /guide senden.',
+                'fa':'📖 لطفاً پیش از تحلیل بعدی راهنمای تنظیمات را تکمیل کنید. راهنما تنظیمات، محاسبات، داده‌های ناقص و هزینه‌ها را توضیح می‌دهد. گزارش هفتگی تا پایان راهنما منتظر می‌ماند. خواندن راهنما رایگان است و جستجو را آغاز نمی‌کند. دکمه زیر را بزنید یا /guide بفرستید.'
+            }.get(language)
+            if text is None: text='📖 Please complete /guide before your next analysis. Reading the guide is free and does not start a search.'
+            action='guide:0' if user.get('approved') and user.get('accepted_at') else 'start'
+            try:
+                db.telegram(user['user_id'],text,{'inline_keyboard':[[{'text':{'en':'Open guide','de':'Anleitung öffnen','fa':'باز کردن راهنما'}.get(language,'Open guide'),'callback_data':action}]]})
+                db.request('POST','bot_updates',{'update_id':marker})
+                delivered+=1
+            except Exception:
+                failed+=1
+            time.sleep(1.1)
+        offset+=len(users)
+    db.admin(f'📖 Setup guide notice: {delivered} delivered, {skipped} already completed/notified, {failed} failed. No AI calls were made.')
+    return {'delivered':delivered,'skipped':skipped,'failed':failed}
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('mode', choices=['sweep','job','health'])
+    p.add_argument('mode', choices=['sweep','job','health','guide-all'])
     p.add_argument('--job-id')
     args = p.parse_args()
     db = Backend()
     try:
-        if args.mode == 'health':
+        if args.mode == 'guide-all':
+            notify_guide_users(db)
+        elif args.mode == 'health':
             # PATCH then insert avoids repeated PK conflicts and keeps only one health row.
             rows = db.request('GET', 'bot_health?id=eq.1')
             db.request('PATCH' if rows else 'POST', 'bot_health?id=eq.1' if rows else 'bot_health',

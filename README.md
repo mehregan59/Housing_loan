@@ -116,3 +116,8 @@ The compact index now uses clickable text after gross yield: **Details · Listin
 
 
 After accepting the notice, new users enter a seven-step setup guide. `/guide` reopens it: language, search location/limits, financing, investment targets/exclusions, reading reports, schedule/allowance and final review. Settings screens include Continue guide, which resumes the last step after editing. Guide navigation never starts or enqueues research; its final step offers an explicit Run with my settings action. Guide text supports English, German and Persian. Existing users can continue using commands directly.
+
+### Required setup guide
+All users, including administrators, must complete the seven-step `/guide` once before manual or weekly analyses. Settings, support and saved reports remain available. Finishing setup does not start paid research. New users see the guide after accepting the notice.
+
+After deploying the updated Telegram Edge Function, run the **Notify all users about required setup guide** workflow manually once. It privately notifies existing users without AI calls; successful notices are deduplicated using negative IDs in `bot_updates` (Telegram update IDs are positive). Blocked chats count as failed. Notice markers expire with the existing 30-day cleanup. Do not run this notification workflow before deploying the new guide completion handler.
