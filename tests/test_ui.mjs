@@ -323,3 +323,12 @@ assert.match(messages.at(-1).text,/240,000/);
 assert.equal(queueCalls,0);assert.equal(refreshRequests,1,'Guide never requests extra paid work');
 await sendAs(456,'guide:complete',true);assert.equal(users.get(456).settings._guide_version,1);
 console.log('Guide translations, final review, edit/resume and no-analysis navigation passed');
+
+control.pilot_locked=true;
+await sendAs(456,'/settings');assert.match(messages.at(-1).text,/Pilot settings are fixed/);
+const pilotOldPrice=users.get(456).settings.max_price_eur;
+await sendAs(456,'/set max_price_eur 123456');assert.match(messages.at(-1).text,/Pilot settings and weekly schedule are fixed/);
+assert.equal(users.get(456).settings.max_price_eur,pilotOldPrice);
+await sendAs(456,'menu:search',true);assert.match(messages.at(-1).text,/Pilot settings and weekly schedule are fixed/);
+await sendAs(456,'/schedule tue 20:00 Europe/Berlin');assert.match(messages.at(-1).text,/Pilot settings and weekly schedule are fixed/);
+console.log('Pilot edit and schedule locks passed');

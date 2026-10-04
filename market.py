@@ -233,8 +233,8 @@ def calculate(x,s,rates):
     missing_costs=[field for field in ('tax_pct','broker_pct') if x[field] is None]
     known_loan=max(0,x['price_eur']*(1+(2+sum(x[field] for field in ('tax_pct','broker_pct') if x[field] is not None))/100)-s['equity_eur'])
     loan=None if missing_costs else known_loan
-    pay=0 if loan==0 else None if loan is None or midpoint is None else loan*(midpoint+s['repayment_pct'])/1200
-    stressed=0 if loan==0 else None if loan is None or stress is None else loan*(stress+s['repayment_pct'])/1200
+    pay=0 if loan==0 else None if loan is None or midpoint is None or s.get('repayment_pct') is None else loan*(midpoint+s['repayment_pct'])/1200
+    stressed=0 if loan==0 else None if loan is None or stress is None or s.get('repayment_pct') is None else loan*(stress+s['repayment_pct'])/1200
     rent=x['rent_monthly']['value']; owner=x['owner_cost_monthly']['value']
     yield_pct=None if rent is None else rent*1200/x['price_eur']
     cash=None if rent is None or owner is None or pay is None else rent-pay-owner-x['size_m2']
@@ -373,7 +373,10 @@ def render(pool,s,rates,center,checked_at,cache_hit):
         rs=rates['rates']; values=[x['rate_pct'] for x in rs]
         lines.append(t('As of ','Stand ')+checked_at[:10]+' · '+t(f'{s["fixed_rate_years"]}-year fixed',f'{s["fixed_rate_years"]} Jahre fest'))
         lines.append(t('📊 Nominal interest range: ','📊 Sollzinsspanne: ')+f'{min(values):.2f}–{max(values):.2f}%')
-        lines.append(t('🧮 Payment estimate uses: ','🧮 Für die Ratenschätzung: ')+f'{(min(values)+max(values))/2:.2f}%'+t(f' interest + {s["repayment_pct"]:g}% initial repayment',f' Zinsen + {s["repayment_pct"]:g}% anfängliche Tilgung'))
+        if s.get('repayment_pct') is None:
+            lines.append(t('🧮 Mortgage payments unavailable: initial repayment assumption is not set.','🧮 Kreditrate nicht berechenbar: anfängliche Tilgung nicht festgelegt.'))
+        else:
+            lines.append(t('🧮 Payment estimate uses: ','🧮 Für die Ratenschätzung: ')+f'{(min(values)+max(values))/2:.2f}%'+t(f' interest + {s["repayment_pct"]:g}% initial repayment',f' Zinsen + {s["repayment_pct"]:g}% anfängliche Tilgung'))
         lines.append(t('🌧 Stress scenario: ','🌧 Stresstest: ')+f'{max(values)+1:.2f}%'+t(' interest; this is not a change during an agreed fixed-rate period.',' Zinsen; keine Änderung während einer vereinbarten Zinsbindung.'))
         for r in rs[:2]:
             provider=(urlsplit(r['source_url']).hostname or '').removeprefix('www.')

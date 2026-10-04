@@ -32,6 +32,7 @@ jobs:
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f tests/cache_database.sql
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f tests/admin_database.sql
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f tests/shared_database.sql
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f tests/pilot_database.sql
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x

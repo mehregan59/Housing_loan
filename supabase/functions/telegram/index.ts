@@ -111,7 +111,7 @@ export function settingsSummary(u:any):string {
 حداکثر وام: ${money(s.max_loan_eur)}
 آورده نقدی: ${money(s.equity_eur)}
 دوره نرخ ثابت: ${s.fixed_rate_years} سال
-بازپرداخت اولیه سالانه: ${s.repayment_pct}%
+بازپرداخت اولیه سالانه: ${s.repayment_pct==null?'نامشخص':s.repayment_pct+'%'}
 
 🎯 معیارهای سرمایه‌گذاری
 حداکثر قیمت هر متر مربع: ${option('max_price_per_m2','EUR')}
@@ -136,7 +136,7 @@ Preferred towns: ${(s.areas||[]).join(', ')||'No additional preference'}
 Maximum loan: ${money(s.max_loan_eur)}
 Available equity: ${money(s.equity_eur)}
 Fixed interest period: ${s.fixed_rate_years} years
-Initial annual repayment: ${s.repayment_pct}%
+Initial annual repayment: ${s.repayment_pct==null?'Not set — mortgage payment unavailable':s.repayment_pct+'%'}
 
 🎯 Investment targets
 Maximum price per m²: ${optional('max_price_per_m2','EUR')}
@@ -149,7 +149,7 @@ Monthly cashflow: ${optional('min_monthly_cashflow_eur','EUR')}
 Schedule: ${DAYS[u.schedule_day]}, ${u.schedule_time} · ${u.timezone}
 Plan: ${u.admin_unlimited?'Administrator — no weekly report limit':u.plan==='paid'?'Paid — up to 7 reports/week':'Free — 1 report/week'}
 
-Tap a button below to edit. Purchase costs count toward your loan limit. These are preferences, not a financing approval.`;
+${u.pilot_locked?'🔒 Pilot settings are fixed for all users. Weekly reports: Monday 09:00 Europe/Berlin.':'Tap a button below to edit.'} Purchase costs count toward your loan limit. These are preferences, not a financing approval.`;
 }
 const settingsButtons={inline_keyboard:[
   [button('🔎 Edit search','menu:search'),button('🏦 Edit financing','menu:finance')],
@@ -429,10 +429,15 @@ Deno.serve(async req => {
     }
     const user = rows[0];
     user.admin_unlimited=adminUnlimited;
+    user.pilot_locked=Boolean((await db('GET','bot_control?id=eq.1'))[0]?.pilot_locked);
     const text = String(cb ? '/'+cb.data : message.text || '').slice(0,2500).trim();
     const [rawcmd, ...parts] = text.split(/\s+/);
     const cmd = rawcmd.split('@')[0].toLowerCase();
     const rest = parts.join(' ');
+    if(user.pilot_locked && (['/set','/location','/areas','/exclude','/schedule','/weekly'].includes(cmd) || /^(menu:|edit:|lang:|day:|weekly:)/.test(action) || (!cb&&!text.startsWith('/')&&user.settings._edit))) {
+      await reply(id,'🔒 Pilot settings and weekly schedule are fixed for all users. Reports are scheduled Monday at 09:00 Europe/Berlin. Use /settings to review the preset or /support for help.');
+      return new Response('ok');
+    }
     const clearEdit=async()=>{
       const clean={...user.settings}; delete clean._edit;
       await db('PATCH','bot_users?user_id=eq.'+id,{settings:clean}); user.settings=clean;
@@ -611,7 +616,7 @@ Deno.serve(async req => {
     } else if (!user.accepted_at) {
       await reply(id,'Please /start and accept the notice first.');
     } else if (cmd==='/settings') {
-      await reply(id,settingsSummary(user),settingsButtons);
+      await reply(id,settingsSummary(user),user.pilot_locked?{inline_keyboard:[[button('📖 Guide','guide:resume'),button('❓ Help','help')],[button('📂 Saved report','saved'),button('🔎 Run analysis','run')]]}:settingsButtons);
     } else if (cmd==='/set' || cmd==='/location' || cmd==='/areas' || cmd==='/exclude') {
       const settings = {...user.settings};
       if (cmd==='/location') {

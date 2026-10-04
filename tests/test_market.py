@@ -496,6 +496,13 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(task['numerical_search_limits'],market.search_scope(S))
         self.assertNotIn('target_new_links',task)
 
+    def test_unknown_repayment_never_becomes_zero_payment(self):
+        settings={**S,'repayment_pct':None}
+        result=market.calculate(listing(),settings,R)
+        self.assertIsNone(result['payment']);self.assertIsNone(result['cash'])
+        report,_=market.render(pool(),settings,R,(48,7.85),NOW.isoformat(),False)
+        self.assertIn('initial repayment assumption is not set',report)
+
     def test_tracking_url_deduplication(self):
         self.assertEqual(market.url(SOURCE+'?utm_source=test'),SOURCE)
 
