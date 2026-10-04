@@ -1,6 +1,6 @@
 import unittest
 from datetime import datetime, timezone
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 import agent
 
 class Tests(unittest.TestCase):
@@ -44,5 +44,24 @@ class Tests(unittest.TestCase):
 
     def test_unknown_usage_never_zero(self):
         with self.assertRaises(ValueError): agent.estimate_cost({})
+
+    def test_uncertain_api_failure_retains_reservation(self):
+        db=Mock()
+        db.rpc.side_effect=[{'settings':{},'user_id':123,'reserved_usd':1},None]
+        db.request.side_effect=[[],[{'charged_usd':None,'reserved_usd':1}]]
+        client=Mock()
+        client.responses.create.side_effect=TimeoutError('not logged')
+        with patch('openai.OpenAI',return_value=client), patch.dict('os.environ',{'ADMIN_USER_ID':'123'}):
+            agent.run_job(db,'test-job')
+        settlement=db.rpc.call_args_list[1].args[1]
+        self.assertEqual(settlement['p_status'],'uncertain')
+        self.assertIsNone(settlement['p_cost'])
+        self.assertEqual(client.responses.create.call_count,1)
+
+    def test_already_claimed_job_never_calls_api(self):
+        db=Mock(); db.rpc.return_value=None
+        with patch('openai.OpenAI') as api:
+            agent.run_job(db,'existing-job')
+        api.assert_not_called()
 
 if __name__=='__main__': unittest.main()
