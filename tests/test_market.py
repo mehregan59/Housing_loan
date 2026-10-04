@@ -116,6 +116,33 @@ class MarketTests(unittest.TestCase):
         self.assertNotIn('No confirmed matches',text)
         self.assertIn('your exclusions still apply',text)
 
+    def test_broad_search_retains_many_incomplete_but_verified_apartments(self):
+        items=[listing(url=SOURCE+str(i),title='Home '+str(i),tenure='',auction=None,
+                       rent_monthly=value(None),owner_cost_monthly=value(None),
+                       energy_class='',year_built=None,lat=None,lon=None) for i in range(12)]
+        text,urls=market.render(pool(items),S,R,(48,7.85),NOW.isoformat(),True)
+        self.assertEqual(len(urls),8)
+        self.assertIn('12 meet numerical limits',text)
+        self.assertEqual(text.count('Provisional candidate'),8)
+        self.assertIn('4 more matching properties',text)
+
+    def test_location_fallback_never_substitutes_another_town(self):
+        matches,_,blocks=market.screen(pool([listing(town='Unknown town',lat=None,lon=None)]),S,R,(48,7.85))
+        self.assertEqual(matches,[])
+        self.assertEqual(blocks['location unverified'],1)
+
+    def test_leasehold_aliases_and_auctions_excluded(self):
+        for tenure in ('Erbpacht','Erbbaurecht','Leasehold'):
+            matches,_,_=market.screen(pool([listing(tenure=tenure)]),S,R,(48,7.85))
+            self.assertEqual(matches,[])
+        self.assertEqual(market.screen(pool([listing(auction=True)]),S,R,(48,7.85))[0],[])
+
+    def test_hard_limits_not_relaxed_for_large_result_count(self):
+        items=[listing(url=SOURCE+str(i),price_eur=500000) for i in range(12)]
+        matches,flex,_=market.screen(pool(items),S,R,(48,7.85))
+        self.assertEqual(matches,[])
+        self.assertEqual(flex,[])
+
     def test_new_properties_first_seen_label_and_more_than_five(self):
         items=[listing(url=SOURCE+str(i),title='Apartment '+str(i)) for i in range(10)]
         s={**S,'_seen':{items[0]['url']}}
@@ -189,7 +216,7 @@ class MarketTests(unittest.TestCase):
     def test_same_settings_and_data_return_previous_report(self):
         import hashlib,json
         pr=row()
-        signature=hashlib.sha256(json.dumps({'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
+        signature=hashlib.sha256(json.dumps({'renderer_version':3,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
         db=Mock();db.request.side_effect=[[row('rates')],[pr],[{'report':'Previous report','usage':{'report_signature':signature}}]]
         meter={'pending':False,'cost':0,'calls':[]}
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
@@ -230,7 +257,7 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(urls,[]);self.assertIn(SOURCE,text)
 
     def test_unverified_listing_location_cannot_pass_radius(self):
-        x=listing(lat=None,lon=None)
+        x=listing(town='Unverified municipality',lat=None,lon=None)
         kept=market.validate_pool(pool([x]),{SOURCE,GEO,TAX},{SOURCE})
         self.assertEqual(len(kept['listings']),1)
         self.assertFalse(market.screen(kept,S,R,(48,7.85))[0])

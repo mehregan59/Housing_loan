@@ -195,9 +195,16 @@ def calculate(x,s,rates):
 
 def screen(pool,s,rates,center):
     matches=[]; flexible=[]; blockers={}
-    for x in pool['listings']:
+    for original in pool['listings']:
+        x=original
+        if point(x) is None:
+            # Cached pools already contain source-validated municipality points.
+            candidates=[p for p in pool.get('places',[]) if location_norm(p['name'])==location_norm(x['town']) and point(p)]
+            if candidates and all(distance(point(candidates[0]),point(p))<1 for p in candidates):
+                x=dict(x,lat=candidates[0]['lat'],lon=candidates[0]['lon'],location_source_url=candidates[0]['source_url'])
         if point(x) is None:
             blockers['location unverified']=blockers.get('location unverified',0)+1;continue
+        if 'Erbpacht' in s.get('exclude',[]) and any(word in norm(x['tenure']) for word in ('erbpacht','erbbaurecht','leasehold')): continue
         if any(norm(e) in norm(x['tenure']) for e in s.get('exclude',[])) or ('Zwangsversteigerung' in s.get('exclude',[]) and x['auction'] is True): continue
         checks_pending=[]
         if 'Erbpacht' in s.get('exclude',[]) and not x['tenure']: checks_pending.append('tenure')
