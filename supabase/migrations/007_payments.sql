@@ -16,7 +16,7 @@ create table bot_orders (
  product text not null check(product in ('report','weekly30')), amount_stars integer not null check(amount_stars>0),
  state text not null default 'created' check(state in ('created','checkout','paid','delivered','refund_pending','refunded')),
  settings_key text not null, settings jsonb,
- telegram_charge_id text unique, job_id uuid unique references bot_jobs,
+ checkout_query_id text, telegram_charge_id text unique, job_id uuid unique references bot_jobs,
  created_at timestamptz not null default now(), invoice_expires_at timestamptz not null default now()+interval '30 minutes',
  paid_at timestamptz, delivered_at timestamptz, refunded_at timestamptz,
  pass_starts_at timestamptz, pass_ends_at timestamptz, refund_error text
@@ -57,7 +57,7 @@ begin
  return jsonb_build_object('order_id',o.id,'product',o.product,'amount_stars',o.amount_stars);
 end $$;
 
-create function bot_order_checkout(p_user bigint,p_id uuid,p_amount integer,p_currency text) returns jsonb
+create function bot_order_checkout(p_user bigint,p_id uuid,p_amount integer,p_currency text,p_checkout text default null) returns jsonb
 language plpgsql security definer set search_path=public,pg_temp as $$
 declare c bot_control; u bot_users; o bot_orders; total numeric;
 begin
@@ -71,7 +71,8 @@ begin
  select coalesce(sum(coalesce(charged_usd,reserved_usd)),0) into total from bot_jobs
  where coalesce(started_at,created_at)>=greatest(c.budget_period_started_at,date_trunc('month',now() at time zone 'UTC') at time zone 'UTC') or status in ('queued','running','uncertain');
  if total+c.run_reserve_usd>c.monthly_budget_usd then return jsonb_build_object('error','research_budget_unavailable'); end if;
- update bot_orders set state='checkout' where id=p_id;
+ if o.state='checkout' and (p_checkout is null or o.checkout_query_id is distinct from p_checkout) then return jsonb_build_object('error','checkout_already_in_progress'); end if;
+ update bot_orders set state='checkout',checkout_query_id=p_checkout where id=p_id;
  return jsonb_build_object('ok',true);
 end $$;
 
@@ -119,7 +120,14 @@ begin
  select * into o from bot_orders where id=p_id for update;
  if not found or o.user_id<>p_user or o.amount_stars<>p_amount or p_currency<>'XTR' or length(p_charge)<1 then raise exception 'Invalid payment'; end if;
  if o.telegram_charge_id is not null then
-  if o.telegram_charge_id<>p_charge then raise exception 'Charge mismatch'; end if;
+  if o.telegram_charge_id<>p_charge then
+   -- A second successful charge cannot buy the same order twice. Retain and
+   -- refund it instead of losing its payment identifier on webhook retries.
+   if exists(select 1 from bot_orders where telegram_charge_id=p_charge) then return jsonb_build_object('duplicate',true,'state','refund_pending'); end if;
+   insert into bot_orders(user_id,product,amount_stars,state,settings_key,telegram_charge_id,paid_at)
+   values(p_user,o.product,p_amount,'refund_pending',o.settings_key,p_charge,now());
+   return jsonb_build_object('state','refund_pending');
+  end if;
   return jsonb_build_object('duplicate',true,'state',o.state,'job_id',o.job_id,'product',o.product);
  end if;
  if exists(select 1 from bot_orders where telegram_charge_id=p_charge) then raise exception 'Charge reused'; end if;
@@ -167,6 +175,23 @@ language plpgsql security definer set search_path=public,pg_temp as $$
 begin
  update bot_orders set state='refunded',refunded_at=now(),settings=null,refund_error=null
  where user_id=p_user and telegram_charge_id=p_charge;
+ -- A refunded order that has not started must never consume new research.
+ update bot_jobs set status='failed',charged_usd=0,finished_at=now(),error_code='PaymentRefunded'
+ where status='queued' and id in (select job_id from bot_orders where user_id=p_user and telegram_charge_id=p_charge);
+end $$;
+
+create function bot_order_cancel_overdue(p_id uuid) returns void
+language plpgsql security definer set search_path=public,pg_temp as $$
+declare c bot_control; j bot_jobs; o bot_orders; job uuid;
+begin
+ select * into c from bot_control where id=1 for update;
+ select job_id into job from bot_orders where id=p_id;
+ select * into j from bot_jobs where id=job for update;
+ if not found or j.status<>'queued' or j.created_at>now()-interval '24 hours' then return; end if;
+ select * into o from bot_orders where id=p_id for update;
+ if not found or o.state<>'paid' then return; end if;
+ update bot_jobs set status='failed',charged_usd=0,finished_at=now(),error_code='PaidQueueOverdue' where id=job;
+ update bot_orders set state='refund_pending',settings=null where id=p_id;
 end $$;
 
 -- Shared cached results are freely reopened by purchasers, not a checkout bypass.
@@ -186,7 +211,7 @@ end $$;
 do $$
 declare signature text;
 begin
- foreach signature in array array['bot_payment_exempt(bigint)','bot_order_create(bigint,text)','bot_order_checkout(bigint,uuid,integer,text)','bot_order_paid(bigint,uuid,integer,text,text)','bot_order_settle(uuid,boolean)','bot_order_refunded(bigint,text)','bot_claim(uuid)','bot_claim_unbilled(uuid)','bot_saved_report(bigint)','bot_saved_report_unbilled(bigint)'] loop
+ foreach signature in array array['bot_payment_exempt(bigint)','bot_order_create(bigint,text)','bot_order_checkout(bigint,uuid,integer,text,text)','bot_order_paid(bigint,uuid,integer,text,text)','bot_order_settle(uuid,boolean)','bot_order_refunded(bigint,text)','bot_order_cancel_overdue(uuid)','bot_claim(uuid)','bot_claim_unbilled(uuid)','bot_saved_report(bigint)','bot_saved_report_unbilled(bigint)'] loop
   execute 'revoke all on function '||signature||' from public,anon,authenticated';
   execute 'grant execute on function '||signature||' to service_role';
  end loop;

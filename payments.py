@@ -11,9 +11,11 @@ def process_refunds(db):
     control=db.request('GET','bot_control?id=eq.1')[0]
     if 'payments_enabled' not in control: return
     # Recover a crash between terminal job settlement and payment settlement.
-    for order in db.request('GET','bot_orders?product=eq.report&state=eq.paid&job_id=not.is.null&select=id,job_id,bot_jobs(status,delivered,finished_at)'):
+    for order in db.request('GET','bot_orders?product=eq.report&state=eq.paid&job_id=not.is.null&select=id,job_id,bot_jobs(status,delivered,finished_at,created_at)'):
         job=order.get('bot_jobs') or {}
-        if job.get('status') in ('failed','uncertain'):
+        if job.get('status')=='queued' and job.get('created_at') and datetime.fromisoformat(job['created_at'].replace('Z','+00:00'))<datetime.now(timezone.utc)-timedelta(hours=24):
+            db.rpc('bot_order_cancel_overdue',{'p_id':order['id']})
+        elif job.get('status') in ('failed','uncertain'):
             settle_report(db,order['job_id'],False)
         elif job.get('status')=='complete':
             if job.get('delivered'):

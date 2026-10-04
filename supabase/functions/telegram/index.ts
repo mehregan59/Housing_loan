@@ -382,14 +382,14 @@ Deno.serve(async req => {
     if(update.pre_checkout_query) {
       const q=update.pre_checkout_query;
       try {
-        const result=await db('POST','rpc/bot_order_checkout',{p_user:Number(q.from.id),p_id:paymentOrderId(q.invoice_payload),p_amount:q.total_amount,p_currency:q.currency},5000);
+        const result=await db('POST','rpc/bot_order_checkout',{p_user:Number(q.from.id),p_id:paymentOrderId(q.invoice_payload),p_amount:q.total_amount,p_currency:q.currency,p_checkout:q.id},5000);
         await tg('answerPreCheckoutQuery',{pre_checkout_query_id:q.id,ok:result.ok===true,...(result.ok===true?{}:{error_message:'Purchase unavailable: '+result.error+'. Please request a new invoice or use /paysupport.'})});
       } catch { await tg('answerPreCheckoutQuery',{pre_checkout_query_id:q.id,ok:false,error_message:'Checkout unavailable. Please try later; no report was purchased.'}); }
       return new Response('ok');
     }
     const cb = update.callback_query;
     const message = update.message || cb?.message;
-    const sender = cb?.from || message?.from;
+    const sender = message?.refunded_payment?{id:message.chat?.id,is_bot:false}:cb?.from || message?.from;
     if (!sender || sender.is_bot || message?.chat?.type!=='private') return new Response('ok');
     const id = Number(sender.id);
     if (!Number.isSafeInteger(id) || message.chat.id!==id) return new Response('Forbidden',{status:403});
