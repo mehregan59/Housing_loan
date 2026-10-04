@@ -223,25 +223,36 @@ def render(pool,s,rates,center,checked_at,cache_hit):
     m,f,blockers=screen(pool,s,rates,center)
     lines=[t('🏠 Apartment screening','🏠 Wohnungssuche')+' — '+s['location'],
            t('Data last researched: ','Daten zuletzt recherchiert: ')+checked_at[:10],
-           t('Shared research; your settings are calculated locally.', 'Gemeinsame Recherche; Ihre Einstellungen werden lokal berechnet.'),
+           t('Gross rental yield is before costs, not profit.', 'Bruttomietrendite ist vor Kosten, kein Gewinn.'),
            t(f'{len(m)} within your limits; {len(f)} nearby alternatives.',f'{len(m)} innerhalb Ihrer Grenzen; {len(f)} ähnliche Alternativen.')]
-    if rates['rates']:
-        rs=rates['rates']; values=[x['rate_pct'] for x in rs]
-        lines.append(t('💶 Mortgage rates: ','💶 Sollzinsen: ')+f'{min(values):.2f}–{max(values):.2f}% '+t(f'({s["fixed_rate_years"]}-year fixed). Stress: {max(values)+1:.2f}%.',f'({s["fixed_rate_years"]} Jahre fest). Stresstest: {max(values)+1:.2f}%.'))
-        lines.extend(x['date']+' '+x['source_url'] for x in rs[:2])
-    else: lines.append(t('💶 Financing unknown: two recent nominal-rate sources unavailable.','💶 Finanzierung unbekannt: zwei aktuelle Sollzinsquellen fehlen.'))
     if not m:
         lines.append(t('No confirmed matches. Main blockers: ','Keine bestätigten Treffer. Hauptgrenzen: ')+(', '.join(labels[k] for k in sorted(blockers,key=blockers.get,reverse=True)[:3]) or t('insufficient verified listings','zu wenige verifizierte Angebote')))
     def block(item,alternative=False):
         x=item['listing']; c=item['calc']
         title='\n'+t('🔄 If you are flexible','🔄 Bei etwas Flexibilität') if alternative else '\n🏠'
-        out=[title+' — '+x['town']+' · '+x['title'][:90],
-             f'{money(x["price_eur"])} · {x["size_m2"]:g} m² · {money(c["ppm"])}/m² · ~{item["distance"]:.1f} km',
-             t('Cold rent: ','Kaltmiete: ')+money(x['rent_monthly']['value'])+t('/month','/Monat')+' ('+t(x['rent_monthly']['kind'],{'actual':'angegeben','estimate':'geschätzt','unknown':'unbekannt'}[x['rent_monthly']['kind']])+'); '+t('gross yield ','Bruttorendite ')+(f'{c["yield"]:.2f}%' if c['yield'] is not None else t('unknown','unbekannt')),
-             t('Loan needed: ','Kreditbedarf: ')+money(c['loan'])+'; '+t('payment: ','Rate: ')+money(c['payment'])+t('/month','/Monat'),
-             t('Estimated monthly result: ','Geschätztes Monatsergebnis: ')+result(c['cash'])+'; '+t('if rates rise: ','bei höheren Zinsen: ')+result(c['stress_cash']),
-             t('Owner fees (reserves excluded): ','Eigentümerkosten (ohne Rücklagen): ')+money(x['owner_cost_monthly']['value'])+t('/month','/Monat')+' ('+t(x['owner_cost_monthly']['kind'],{'actual':'angegeben','estimate':'geschätzt','unknown':'unbekannt'}[x['owner_cost_monthly']['kind']])+')',
-             t('Screening score: ','Suchbewertung: ')+f'{item["score"]}/10. '+t('Rent covers estimated costs.' if c['cash'] is not None and c['cash']>=0 else 'Needs extra money or cost clarification.','Miete deckt geschätzte Kosten.' if c['cash'] is not None and c['cash']>=0 else 'Zuzahlung oder Kostenklärung nötig.')]
+        rent_kind=t({'actual':'advertised','estimate':'estimated','unknown':'unknown'}[x['rent_monthly']['kind']],{'actual':'angegeben','estimate':'geschätzt','unknown':'unbekannt'}[x['rent_monthly']['kind']])
+        owner_kind=t(x['owner_cost_monthly']['kind'],{'actual':'angegeben','estimate':'geschätzt','unknown':'unbekannt'}[x['owner_cost_monthly']['kind']])
+        out=[title+' — '+x['title'][:90],
+             '📍 '+x['town']+', '+x['state']+' · ~'+f'{item["distance"]:.1f} km '+t('from ','von ')+s['location'],
+             t('📈 Gross rental yield: ','📈 Bruttomietrendite: ')+(f'{c["yield"]:.2f}%' if c['yield'] is not None else t('unknown','unbekannt'))+t(' before costs',' vor Kosten'),
+             t('🏦 Estimated loan needed: ','🏦 Geschätzter Kreditbedarf: ')+money(c['loan']),
+             t('💵 Cold rent: ','💵 Kaltmiete: ')+money(x['rent_monthly']['value'])+t('/month','/Monat')+' · '+rent_kind,
+             t('🗓 Annual rental income: ','🗓 Jährliche Mieteinnahmen: ')+money(None if x['rent_monthly']['value'] is None else x['rent_monthly']['value']*12)+t(' before costs',' vor Kosten'),
+             t('🏷 Purchase price: ','🏷 Kaufpreis: ')+money(x['price_eur']),
+             f'📐 {x["size_m2"]:g} m² · {money(c["ppm"])}/m²',
+             t('💳 Estimated mortgage payment: ','💳 Geschätzte Kreditrate: ')+money(c['payment'])+t('/month','/Monat'),
+             t('💰 Estimated monthly result: ','💰 Geschätztes Monatsergebnis: ')+result(c['cash']),
+             t('🌧 If interest rates rise: ','🌧 Bei höheren Zinsen: ')+result(c['stress_cash']),
+             t('🏢 Owner building fees: ','🏢 Eigentümerkosten: ')+money(x['owner_cost_monthly']['value'])+t('/month','/Monat')+' · '+owner_kind+t(' (reserve contributions excluded)',' (ohne Rücklagen)'),
+             t('🛠 Maintenance allowance: ','🛠 Instandhaltungsansatz: ')+money(x['size_m2'])+t('/month','/Monat'),
+             t('🏗 Built: ','🏗 Baujahr: ')+(f'{x["year_built"]:.0f}' if x['year_built'] is not None else t('unknown','unbekannt'))+' · '+t('Energy: ','Energieklasse: ')+(x['energy_class'] or t('unknown','unbekannt')),
+             t('⭐ Screening score: ','⭐ Suchbewertung: ')+f'{item["score"]}/10',
+             t('💬 Verdict: ','💬 Einschätzung: ')+t('Rent covers estimated costs.' if c['cash'] is not None and c['cash']>=0 else 'Needs extra money or cost clarification.','Miete deckt geschätzte Kosten.' if c['cash'] is not None and c['cash']>=0 else 'Zuzahlung oder Kostenklärung nötig.')]
+        if x['owner_cost_monthly']['value'] is None and x['rent_monthly']['value'] is not None and c['payment'] is not None:
+            partial=x['rent_monthly']['value']-c['payment']-x['size_m2']
+            out.append(t('🔎 Before unknown owner fees: ','🔎 Vor unbekannten Eigentümerkosten: ')+result(partial)+t(' (maintenance already included; final result unknown).',' (Instandhaltung bereits enthalten; Endergebnis unbekannt).'))
+        if x['tax_pct'] is not None and x['broker_pct'] is not None:
+            out.append(t('🧾 Purchase costs used: ','🧾 Angesetzte Kaufnebenkosten: ')+f'{x["tax_pct"]:g}% '+t('transfer tax','Grunderwerbsteuer')+f' + ~2% '+t('notary/registry','Notar/Grundbuch')+f' + {x["broker_pct"]:g}% '+t('buyer commission','Käuferprovision'))
         for field in ('rent_monthly','owner_cost_monthly'):
             v=x[field]
             if v['kind']=='estimate': out.append(t('Estimate basis: ','Schätzgrundlage: ')+v['basis'][:180]+' '+v['source_url'])
@@ -254,13 +265,28 @@ def render(pool,s,rates,center,checked_at,cache_hit):
         if alternative:
             out.append(t('Outside your limits; required changes: ','Außerhalb Ihrer Grenzen; nötige Änderungen: ')+', '.join(labels[k]+' → '+(money(v) if k.endswith('_eur') else f'{v:.2f}'+(' m²' if k=='min_size_m2' else ' km' if k=='radius_km' else '%')) for k,v in item['changes']))
             if any(k=='max_loan_eur' for k,_ in item['changes']): out.append(t('Not financeable under your current loan cap.','Mit Ihrer aktuellen Kreditgrenze nicht finanzierbar.'))
-        out.append(t('Risk: ','Risiko: ')+(x['risk_de'] if de else x['risk_en'])[:220]);out.append(x['url'])
+        out.append(t('⚠️ Main risk: ','⚠️ Hauptrisiko: ')+(x['risk_de'] if de else x['risk_en'])[:220]);out.append(t('🔗 Listing: ','🔗 Anzeige: ')+x['url'])
         return '\n'.join(out)
     # More verified candidates, never padding; up to 8 strict + 3 flexible.
     shown=m[:8]; alternatives=f[:3] if len(m)<5 else []
     lines.extend(block(i) for i in shown)
     lines.extend(block(i,True) for i in alternatives)
     if len(m)>8: lines.append(t(f'{len(m)-8} more matching properties in the saved pool.',f'{len(m)-8} weitere passende Wohnungen im gespeicherten Bestand.'))
+    lines.append('\n'+t('💶 MORTGAGE RATES','💶 BAUZINSEN'))
+    if rates['rates']:
+        rs=rates['rates']; values=[x['rate_pct'] for x in rs]
+        lines.append(t('As of ','Stand ')+checked_at[:10]+' · '+t(f'{s["fixed_rate_years"]}-year fixed',f'{s["fixed_rate_years"]} Jahre fest'))
+        lines.append(t('📊 Nominal interest range: ','📊 Sollzinsspanne: ')+f'{min(values):.2f}–{max(values):.2f}%')
+        lines.append(t('🧮 Payment estimate uses: ','🧮 Für die Ratenschätzung: ')+f'{(min(values)+max(values))/2:.2f}%'+t(f' interest + {s["repayment_pct"]:g}% initial repayment',f' Zinsen + {s["repayment_pct"]:g}% anfängliche Tilgung'))
+        lines.append(t('🌧 Stress scenario: ','🌧 Stresstest: ')+f'{max(values)+1:.2f}%'+t(' interest; this is not a change during an agreed fixed-rate period.',' Zinsen; keine Änderung während einer vereinbarten Zinsbindung.'))
+        for r in rs[:2]:
+            provider=(urlsplit(r['source_url']).hostname or '').removeprefix('www.')
+            lines.append('• '+provider+': '+f'{r["rate_pct"]:.2f}%'+t(' nominal · dated ',' Sollzins · vom ')+r['date'])
+            lines.append('🔗 '+r['source_url'])
+        lines.append(t('✅ Source dates are no more than 14 days old.','✅ Quelldaten sind höchstens 14 Tage alt.'))
+    else:
+        lines.append(t('⚠️ Financing unknown: two recent nominal-rate sources unavailable.','⚠️ Finanzierung unbekannt: zwei aktuelle Sollzinsquellen fehlen.'))
+    lines.append('\n'+t('📋 STILL TO CHECK','📋 NOCH ZU PRÜFEN'))
     lines.append('\n'+t('⚠️ Estimates include ~2% notary/registry and €1/m² monthly maintenance. Distances use approximate town centers. Taxes on income, empty months and major repairs are excluded. Check leases, building repair plans, rent controls and availability. Zero-equity financing is not guaranteed. Scores use a fixed screening rubric, not predictions.','⚠️ Schätzungen enthalten ca. 2% Notar/Grundbuch und 1 €/m² monatliche Instandhaltung. Entfernungen beziehen sich ungefähr auf Ortszentren. Einkommensteuer, Leerstand und größere Reparaturen fehlen. Mietverträge, Sanierungspläne, Mietregeln und Verfügbarkeit prüfen. Vollfinanzierung ist nicht garantiert. Bewertungen sind Suchhilfen, keine Prognosen.'))
     lines.append(t(DISCLAIMER,'Nur Schätzungen und allgemeine Informationen, keine Finanzberatung oder Finanzierungszusage. Vor Entscheidungen selbst prüfen.'))
     return '\n'.join(lines),[i['listing']['url'] for i in shown+alternatives]
