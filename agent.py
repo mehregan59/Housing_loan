@@ -49,14 +49,24 @@ def parse_report(text, sources):
 
 
 def chunks(text, limit=3900):
+    """Split conservatively by UTF-16 units, preserving all text and emojis."""
+    if limit < 2:
+        raise ValueError('Message limit must be at least two')
     while text:
-        cut = min(len(text), limit)
+        units = 0
+        cut = 0
+        for char in text:
+            width = 2 if ord(char) > 0xFFFF else 1
+            if units + width > limit:
+                break
+            units += width
+            cut += 1
         if cut < len(text):
-            cut = text.rfind('\n', 0, cut) or cut
-            if cut <= 0:
-                cut = limit
+            boundary = text.rfind('\n', 0, cut)
+            if boundary >= cut // 2:
+                cut = boundary + 1
         yield text[:cut]
-        text = text[cut:].lstrip('\n')
+        text = text[cut:]
 
 
 def due_slot(user, now):

@@ -128,11 +128,23 @@ async function tg(method: string, body: unknown) {
   if (!r.ok || !(await r.json()).ok) throw new Error('Telegram operation failed');
 }
 async function reply(id: number, text: string, keyboard?: unknown) {
-  for (let i=0; i<text.length; i+=3800) {
-    await tg('sendMessage',{chat_id:id,text:text.slice(i,i+3800),link_preview_options:{is_disabled:true},
-      ...(keyboard && i===0 ? {reply_markup:keyboard} : {})});
+  let first = true;
+  while (text.length) {
+    let cut = Math.min(text.length,3800);
+    // JavaScript counts UTF-16 units: never cut between an emoji's surrogates.
+    if (cut < text.length) {
+      const before = text.charCodeAt(cut-1);
+      if (before >= 0xD800 && before <= 0xDBFF) cut--;
+      const boundary = text.lastIndexOf('\n',cut-1);
+      if (boundary >= Math.floor(cut/2)) cut = boundary+1;
+    }
+    await tg('sendMessage',{chat_id:id,text:text.slice(0,cut),link_preview_options:{is_disabled:true},
+      ...(keyboard && first ? {reply_markup:keyboard} : {})});
+    first = false;
+    text = text.slice(cut);
   }
 }
+
 const buttons = {inline_keyboard:[[{text:'⚙️ My settings',callback_data:'settings'},{text:'🔎 Run analysis',callback_data:'run'}],[{text:'📂 Saved report (free)',callback_data:'saved'},{text:'Help',callback_data:'help'}]]};
 async function dispatch(job: string) {
   const repo = env('GITHUB_REPOSITORY');

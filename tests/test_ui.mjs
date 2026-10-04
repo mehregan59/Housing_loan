@@ -184,6 +184,17 @@ globalThis.fetch=async(address,options={})=>{
 await sendAs(456,'/run');assert.equal(queueCalls,0);assert.equal(messages.at(-1).text,cachedReport);
 assert.match(messages.at(-2).text,/No quota used/);
 await sendAs(456,'saved',true);assert.equal(queueCalls,0);assert.equal(messages.at(-1).text,cachedReport);
+cachedReport=('🏠 Apartment\n📍 Freiburg\n'+'Details '.repeat(400)+'\n\n').repeat(12);
+const messageStart=messages.length;
+await sendAs(456,'/saved');
+const reportParts=messages.slice(messageStart).filter(m=>m.chat_id===456).map(m=>m.text);
+// The introductory notification is separate from the stored report.
+const firstPart=reportParts.findIndex(t=>t.startsWith('🏠 Apartment'));
+const chunks=reportParts.slice(firstPart);
+assert.ok(chunks.length>2);
+assert.equal(chunks.join(''),cachedReport);
+assert.ok(chunks.every(t=>t.length<=3800 && !/[\uD800-\uDBFF]$/.test(t) && !/^[\uDC00-\uDFFF]/.test(t)));
+assert.equal(queueCalls,0);
 cachedReport='';
 await sendAs(456,'/saved');assert.match(messages.at(-1).text,/No current shared report/);assert.equal(queueCalls,0);
 control.research_v2=false;

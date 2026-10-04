@@ -25,7 +25,14 @@ class Tests(unittest.TestCase):
         text='🏠'*8500
         parts=list(agent.chunks(text))
         self.assertEqual(''.join(parts),text)
-        self.assertTrue(all(len(x)<=3900 for x in parts))
+        self.assertTrue(all(len(x.encode("utf-16-le"))//2<=3900 for x in parts))
+
+    def test_split_report_preserves_paragraphs(self):
+        text=('🏠 Apartment\n📍 Freiburg\n' + 'Details '*400 + '\n\n')*12
+        parts=list(agent.chunks(text))
+        self.assertGreater(len(parts),2)
+        self.assertEqual(''.join(parts),text)
+        self.assertTrue(all(len(x.encode('utf-16-le'))//2<=3900 for x in parts))
 
     def test_summer_winter_schedule(self):
         user={'timezone':'Europe/Berlin','schedule_time':'08:00','schedule_day':0}
