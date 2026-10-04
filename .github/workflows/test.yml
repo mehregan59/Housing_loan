@@ -30,3 +30,7 @@ jobs:
         with:
           deno-version: v2.x
       - run: deno check supabase/functions/telegram/index.ts
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: node --experimental-strip-types tests/test_ui.mjs

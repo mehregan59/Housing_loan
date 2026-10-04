@@ -3,7 +3,8 @@ const env = (key: string) => { const v = Deno.env.get(key); if (!v) throw new Er
 const NOTICE = 'Estimates only; general information, not financial advice or a financing commitment. Verify independently before deciding. Listing data may be incomplete. Settings and reports are stored in Supabase; analysis uses OpenAI; Telegram delivers messages. API costs are reported to the administrator. Do not send bank credentials or identity documents. /support forwards your message and Telegram ID to the administrator. This is a private pilot, not a publicly launched service.';
 const HELP = `Housing Loan Bot — Germany pilot
 /start — read notice and accept
-/settings — your investment settings
+/settings — your investment settings; tap buttons to edit each field
+/cancel — cancel the current edit
 /set FIELD VALUE — change one setting
 Example: /set max_price_eur 250000
 /location Freiburg — choose a German city
@@ -26,6 +27,90 @@ const MAX: Record<string, [number, number]> = {
 };
 const OPTIONAL = new Set(['max_price_per_m2','target_gross_yield_pct','min_monthly_cashflow_eur']);
 
+const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+const LABELS: Record<string,string> = {
+  location:'City', areas:'Preferred towns', radius_km:'Search radius',
+  max_price_eur:'Maximum purchase price',max_loan_eur:'Maximum loan',equity_eur:'Available equity',
+  min_size_m2:'Minimum size',language:'Report language',fixed_rate_years:'Fixed interest period',
+  repayment_pct:'Initial annual repayment',max_price_per_m2:'Maximum price per m²',
+  target_gross_yield_pct:'Target gross rental yield',min_monthly_cashflow_eur:'Minimum monthly cashflow',
+  schedule_time:'Delivery time',timezone:'Timezone'
+};
+const GROUPS: Record<string,string[]> = {
+  search:['location','areas','radius_km','max_price_eur','min_size_m2','language'],
+  finance:['max_loan_eur','equity_eur','fixed_rate_years','repayment_pct'],
+  targets:['max_price_per_m2','target_gross_yield_pct','min_monthly_cashflow_eur'],
+  schedule:['schedule_time','timezone']
+};
+const button=(text:string,data:string)=>({text,callback_data:data});
+const money=(v:unknown)=>new Intl.NumberFormat('en-GB',{style:'currency',currency:'EUR',maximumFractionDigits:2}).format(Number(v));
+export function settingsSummary(u:any):string {
+  const s=u.settings;
+  const optional=(key:string,unit:string)=>s[key]==null?'No filter set':unit==='EUR'?money(s[key]):s[key]+unit;
+  const exclusions=(s.exclude||[]).map((x:string)=>x==='Erbpacht'?'Leasehold':x==='Zwangsversteigerung'?'Foreclosure auctions':x).join(', ')||'None';
+  return `🏠 Your property search
+📍 ${s.location}, Germany · within ${s.radius_km} km
+Preferred towns: ${(s.areas||[]).join(', ')||'No additional preference'}
+💶 Maximum purchase price: ${money(s.max_price_eur)}
+📐 Minimum size: ${s.min_size_m2} m²
+🌐 Report language: ${s.language==='de'?'German':'English'}
+
+🏦 Financing assumptions
+Maximum loan: ${money(s.max_loan_eur)}
+Available equity: ${money(s.equity_eur)}
+Fixed interest period: ${s.fixed_rate_years} years
+Initial annual repayment: ${s.repayment_pct}%
+
+🎯 Investment targets
+Maximum price per m²: ${optional('max_price_per_m2','EUR')}
+Gross rental yield: ${optional('target_gross_yield_pct','%')}
+Monthly cashflow: ${optional('min_monthly_cashflow_eur','EUR')}
+
+🚫 Excluded: ${exclusions}
+
+📅 Weekly reports: ${u.weekly?'On':'Off'}
+Schedule: ${DAYS[u.schedule_day]}, ${u.schedule_time} · ${u.timezone}
+Plan: ${u.plan==='paid'?'Paid — up to 7 reports/week':'Free — 1 report/week'}
+
+Tap a button below to edit. Purchase costs count toward your loan limit. These are preferences, not a financing approval.`;
+}
+const settingsButtons={inline_keyboard:[
+  [button('🔎 Edit search','menu:search'),button('🏦 Edit financing','menu:finance')],
+  [button('🎯 Investment targets','menu:targets'),button('🚫 Exclusions','menu:exclude')],
+  [button('📅 Change schedule','menu:schedule')],
+  [button('🔎 Run analysis','run'),button('❓ Help','help')]
+]};
+export function parseEdit(field:string,input:string):unknown {
+  let value=input.trim();
+  if (['location','areas'].includes(field)) {
+    if (!value || value.length>(field==='location'?100:500)) throw new Error('Enter a city name or a short list of towns.');
+    return field==='location'?value:value.toLowerCase()==='none'?[]:value.split(',').map(x=>x.trim()).filter(Boolean).slice(0,15);
+  }
+  if (field==='language') { if (!['en','de'].includes(value)) throw new Error('Choose English or German below.'); return value; }
+  if (field==='timezone') { try { new Intl.DateTimeFormat('en',{timeZone:value}).format(); } catch { throw new Error('Enter a timezone such as Europe/Berlin.'); } return value; }
+  if (field==='schedule_time') {
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) throw new Error('Enter a 24-hour time, for example 08:00 or 18:30.');
+    return value;
+  }
+  if (OPTIONAL.has(field) && value.toLowerCase()==='none') return null;
+  // Accept 250000, 250 000, 250,000, 250.000, €250,000 and decimal comma percentages.
+  value=value.replace(/[€%\s]/g,'').replace(/(?:km|m²|m2|years?)$/i,'');
+  if (/^-?\d{1,3}(?:[,.]\d{3})+$/.test(value)) value=value.replace(/[,.]/g,'');
+  else if (/^-?\d+,\d{1,2}$/.test(value)) value=value.replace(',','.');
+  if (!/^-?\d+(?:\.\d+)?$/.test(value)) throw new Error('Enter a number, for example 250000 or 2.5.');
+  const n=Number(value), bounds=MAX[field];
+  if (!bounds || !Number.isFinite(n) || n<bounds[0] || n>bounds[1] || (field==='fixed_rate_years'&&!Number.isInteger(n))) {
+    throw new Error(bounds?`Enter a value from ${bounds[0]} to ${bounds[1]}${field==='fixed_rate_years'?' in whole years':''}.`:'Unknown setting.');
+  }
+  return n;
+}
+function editPrompt(field:string):string {
+  const examples:Record<string,string>={location:'Freiburg (Germany only)',areas:'Freiburg, Emmendingen — or none',radius_km:'100',max_price_eur:'250000',
+    max_loan_eur:'250000',equity_eur:'0',min_size_m2:'30',fixed_rate_years:'10',repayment_pct:'2',
+    max_price_per_m2:'5000',target_gross_yield_pct:'4',min_monthly_cashflow_eur:'-150',schedule_time:'08:00',timezone:'Europe/Berlin'};
+  return `${LABELS[field]}\nSend the new value in your next message.\nExample: ${examples[field]||'en or de'}${OPTIONAL.has(field)?'\nSend none to remove this filter.':''}\nUse /cancel to leave without changing it.`;
+}
+
 async function db(method: string, path: string, body?: unknown) {
   const key = Deno.env.get('BOT_DATABASE_KEY') || env('SUPABASE_SERVICE_ROLE_KEY');
   const r = await fetch(env('SUPABASE_URL')+'/rest/v1/'+path, {
@@ -47,7 +132,7 @@ async function reply(id: number, text: string, keyboard?: unknown) {
       ...(keyboard && i===0 ? {reply_markup:keyboard} : {})});
   }
 }
-const buttons = {inline_keyboard:[[{text:'🔎 Run analysis',callback_data:'run'},{text:'Help',callback_data:'help'}]]};
+const buttons = {inline_keyboard:[[{text:'⚙️ My settings',callback_data:'settings'},{text:'🔎 Run analysis',callback_data:'run'}],[{text:'Help',callback_data:'help'}]]};
 async function dispatch(job: string) {
   const repo = env('GITHUB_REPOSITORY');
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('Invalid repository');
@@ -87,6 +172,90 @@ Deno.serve(async req => {
     const [rawcmd, ...parts] = text.split(/\s+/);
     const cmd = rawcmd.split('@')[0].toLowerCase();
     const rest = parts.join(' ');
+    const action=cb?String(cb.data):'';
+    const clearEdit=async()=>{
+      const clean={...user.settings}; delete clean._edit;
+      await db('PATCH','bot_users?user_id=eq.'+id,{settings:clean}); user.settings=clean;
+    };
+    if (user.accepted_at && (cmd==='/cancel'||action==='cancel')) {
+      await clearEdit(); await reply(id,'Edit cancelled. Your settings are unchanged.',settingsButtons); return new Response('ok');
+    }
+    if (user.accepted_at && action.startsWith('menu:')) {
+      await clearEdit(); const group=action.slice(5);
+      let keyboard:any;
+      if (group==='exclude') {
+        keyboard={inline_keyboard:[...['Erbpacht','Zwangsversteigerung'].map(x=>[button((user.settings.exclude.includes(x)?'☑️ ':'⬜ ')+(x==='Erbpacht'?'Exclude leasehold':'Exclude foreclosure auctions'),'toggle:'+x)]),[button('← My settings','settings')]]};
+        await reply(id,'🚫 Exclusions\nTap an item to turn its exclusion on or off.',keyboard);
+      } else if (GROUPS[group]) {
+        const rows=GROUPS[group].map(f=>[button(LABELS[f],'edit:'+f)]);
+        if (group==='schedule') {
+          rows.unshift([button('Change weekday','days')]);
+          rows.push([button(user.weekly?'Turn weekly reports off':'Turn weekly reports on',user.weekly?'weekly:off':'weekly:on')]);
+        }
+        rows.push([button('← My settings','settings')]);
+        await reply(id,'Choose the setting to change:',{inline_keyboard:rows});
+      } else await reply(id,'Open /settings to choose a setting.',settingsButtons);
+      return new Response('ok');
+    }
+    if (user.accepted_at && action==='days') {
+      await clearEdit(); await reply(id,'Choose your delivery day:',{inline_keyboard:[...DAYS.map((d,i)=>[button(d,'day:'+i)]),[button('← My settings','settings')]]}); return new Response('ok');
+    }
+    if (user.accepted_at && /^(day:|weekly:|toggle:)/.test(action)) {
+      await clearEdit();
+      if (action.startsWith('day:')) {
+        const day=Number(action.slice(4)); if (!Number.isInteger(day)||day<0||day>6) throw new Error('Invalid day');
+        await db('PATCH','bot_users?user_id=eq.'+id,{schedule_day:day});
+        await reply(id,'✅ Delivery day saved: '+DAYS[day],settingsButtons);
+      } else if (action.startsWith('weekly:')) {
+        if (!['weekly:on','weekly:off'].includes(action)) throw new Error('Invalid choice');
+        await db('PATCH','bot_users?user_id=eq.'+id,{weekly:action==='weekly:on'});
+        await reply(id,'✅ Weekly reports '+(action==='weekly:on'?'on':'off')+'. Scheduled reports count toward your weekly allowance.',settingsButtons);
+      } else {
+        const item=action.slice(7); if (!['Erbpacht','Zwangsversteigerung'].includes(item)) throw new Error('Invalid exclusion');
+        const list=user.settings.exclude.includes(item)?user.settings.exclude.filter((x:string)=>x!==item):[...user.settings.exclude,item];
+        await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,exclude:list}});
+        await reply(id,'✅ Exclusions updated. Open Exclusions again to see current choices.',settingsButtons);
+      }
+      return new Response('ok');
+    }
+    if (user.accepted_at && action.startsWith('edit:')) {
+      const field=action.slice(5); if (!LABELS[field]) throw new Error('Invalid edit field');
+      if (field==='language') {
+        await clearEdit(); await reply(id,'Choose your report language:',{inline_keyboard:[[button('English','lang:en'),button('Deutsch','lang:de')],[button('Cancel','cancel')]]});
+      } else {
+        await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_edit:{field,at:Date.now()}}});
+        await reply(id,editPrompt(field),{inline_keyboard:[[button('Cancel','cancel')]]});
+      }
+      return new Response('ok');
+    }
+    if (user.accepted_at && action.startsWith('lang:')) {
+      const language=parseEdit('language',action.slice(5)); await clearEdit();
+      await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,language}});
+      await reply(id,'✅ Report language saved: '+(language==='en'?'English':'German'),settingsButtons); return new Response('ok');
+    }
+    if (user.accepted_at && !cb && !text.startsWith('/') && user.settings._edit) {
+      const pending=user.settings._edit;
+      if (Date.now()-pending.at>15*60*1000 || !LABELS[pending.field]) {
+        await clearEdit(); await reply(id,'This edit expired. Open /settings and choose the field again.',settingsButtons);
+      } else {
+        try {
+          const value=parseEdit(pending.field,text);
+          const clean={...user.settings}; delete clean._edit;
+          if (['schedule_time','timezone'].includes(pending.field)) await db('PATCH','bot_users?user_id=eq.'+id,{settings:clean,[pending.field]:value});
+          else {
+            const settings={...clean,[pending.field]:value};
+            if (pending.field==='location') { settings.areas=[]; settings.country='Germany'; }
+            await db('PATCH','bot_users?user_id=eq.'+id,{settings});
+          }
+          await reply(id,'✅ '+LABELS[pending.field]+' saved: '+(value===null?'No filter':Array.isArray(value)?value.join(', ')||'None':value),settingsButtons);
+        } catch(e) {
+          await reply(id,e instanceof Error?e.message:'Could not save. Try again.',{inline_keyboard:[[button('Cancel','cancel')]]});
+        }
+      }
+      return new Response('ok');
+    }
+    // A command exits a pending edit; plain text only changes the explicitly selected field.
+    if (user.settings._edit && (cb || text.startsWith('/'))) await clearEdit();
     // /run uses an atomic unique request key in SQL. Other commands are idempotent,
     // except /support which gets a dedicated unique update record.
     if (cmd==='/start' || cmd==='/disclaimer') {
@@ -136,7 +305,7 @@ Deno.serve(async req => {
     } else if (!user.accepted_at) {
       await reply(id,'Please /start and accept the notice first.');
     } else if (cmd==='/settings') {
-      await reply(id,JSON.stringify(user.settings,null,2)+'\nWeekly: '+user.weekly+'\nSchedule: '+['mon','tue','wed','thu','fri','sat','sun'][user.schedule_day]+' '+user.schedule_time+' '+user.timezone,buttons);
+      await reply(id,settingsSummary(user),settingsButtons);
     } else if (cmd==='/set' || cmd==='/location' || cmd==='/areas' || cmd==='/exclude') {
       const settings = {...user.settings};
       if (cmd==='/location') {

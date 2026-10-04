@@ -19,7 +19,8 @@ No always-running laptop is required. The worker defaults to `gpt-6-astra`, supp
 
 - `/start`: information notice and explicit acceptance.
 - `/help`: command examples, allowances and failure guidance.
-- `/settings`, `/set FIELD VALUE`: view/edit private financial settings.
+- `/settings`: readable summary with buttons for individual settings. Tap a field, send a new value, and receive confirmation. `/cancel` exits; unanswered edits expire after 15 minutes. Language, day, exclusions and weekly on/off use selection buttons. No AI call is made for editing settings.
+- `/set FIELD VALUE`: optional command shortcut for experienced users.
 - `/location CITY`, `/areas CITY, CITY`: German search locations.
 - `/exclude Erbpacht, Zwangsversteigerung`; `none` clears exclusions.
 - `/schedule mon 08:00 Europe/Berlin`: editable weekday/time/timezone.

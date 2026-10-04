@@ -153,7 +153,7 @@ def run_job(db, job_id):
     try:
         if MODEL not in ('gpt-6-astra', 'gpt-6.1-sol'):
             raise ValueError('Unpriced model')
-        settings = job['settings']
+        settings = {k:v for k,v in job['settings'].items() if not k.startswith('_')}
         settings['already_seen_urls'] = [x['url'] for x in db.request('GET',
             f"bot_seen?user_id=eq.{job['user_id']}&order=evaluated_at.desc&limit=200")]
         if len(json.dumps(settings)) > 40000:
