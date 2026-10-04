@@ -20,6 +20,10 @@ Example: /set max_price_eur 250000
 /saved — existing report for your exact settings; no quota or AI cost
 /support YOUR QUESTION — contact the administrator
 /disclaimer — notice and data use
+/buy — one report or a 30-day weekly pass when payments open
+/terms — purchase terms
+/paysupport YOUR QUESTION — payment help
+Pilot users remain free. Paid checkout uses Telegram Stars; euro cost varies.
 Free: 1 report/week. Paid: up to 7. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. Manual membership during pilot. Delivery may be delayed; changing schedule does not add reports. If a report fails, use /support; repeated clicks cannot start parallel analyses.
 Editable numeric fields: max_loan_eur, equity_eur, max_price_eur, min_size_m2, radius_km, max_price_per_m2, target_gross_yield_pct, min_monthly_cashflow_eur, fixed_rate_years, repayment_pct. Optional targets accept "none". /set language en, de or fa. Other countries will require country-specific rules in a future release.`;
 const HELP_FA=`راهنمای ربات مسکن — آلمان
@@ -120,7 +124,7 @@ export function settingsSummary(u:any):string {
 🚫 موارد مستثنا: ${(s.exclude||[]).map((x:string)=>x==='Erbpacht'?'ملک با حق اجاره زمین':x==='Zwangsversteigerung'?'مزایده توقیفی':x).join('، ')||'هیچ‌کدام'}
 📅 گزارش هفتگی: ${u.weekly?'روشن':'خاموش'}
 زمان: ${DAYS[u.schedule_day]}، ${u.schedule_time} · ${u.timezone}
-طرح: ${u.admin_unlimited?'مدیر؛ بدون سقف هفتگی':u.plan==='paid'?'اشتراک پولی؛ تا ۷ گزارش در هفته':'رایگان؛ یک گزارش در هفته'}
+طرح: ${u.admin_unlimited?'مدیر؛ بدون سقف هفتگی':u.payments_active?'پرداخت هر گزارش / بسته هفتگی ۳۰ روزه':u.pilot_free?'آزمایشی؛ بدون پرداخت':u.plan==='paid'?'اشتراک پولی؛ تا ۷ گزارش در هفته':'رایگان؛ یک گزارش در هفته'}
 برای تغییر تنظیمات دکمه‌های زیر را بزنید. هزینه‌های خرید در محاسبه وام لحاظ می‌شود؛ این تنظیمات تأیید تأمین مالی نیست.`;
   }
   const optional=(key:string,unit:string)=>s[key]==null?'No filter set':unit==='EUR'?money(s[key]):s[key]+unit;
@@ -147,7 +151,7 @@ Monthly cashflow: ${optional('min_monthly_cashflow_eur','EUR')}
 
 📅 Weekly reports: ${u.weekly?'On':'Off'}
 Schedule: ${DAYS[u.schedule_day]}, ${u.schedule_time} · ${u.timezone}
-Plan: ${u.admin_unlimited?'Administrator — no weekly report limit':u.plan==='paid'?'Paid — up to 7 reports/week':'Free — 1 report/week'}
+Plan: ${u.admin_unlimited?'Administrator — no weekly report limit':u.payments_active?'Pay per report / optional 30-day weekly pass':u.pilot_free?'Pilot — no payment required':u.plan==='paid'?'Paid — up to 7 reports/week':'Free — 1 report/week'}
 
 ${u.pilot_locked?'🔒 Pilot settings are fixed for all users. Weekly reports: Monday 09:00 Europe/Berlin.':'Tap a button below to edit.'} Purchase costs count toward your loan limit. These are preferences, not a financing approval.`;
 }
@@ -184,6 +188,7 @@ export function setupGuide(step:number,language:string,user:any) {
       '✅ 7/7 — Prüfen, dann starten\nAktuelle Einstellungen unten prüfen. Einstellungen prüfen öffnet Änderungen; Anleitung fortsetzen führt zurück. Analyse starten verwendet diese Werte und kann Kontingent oder neue Recherche benötigen; vorhandene Daten werden wiederverwendet.\nDas Lesen startet nichts. Bei Bereitschaft Analyse starten wählen. Fragen: /support IHRE FRAGE.',
       '✅ ۷/۷ — بررسی و شروع\nتنظیمات فعلی را در زیر بررسی کنید. «بررسی تنظیمات» برای تغییر و «ادامه راهنما» برای بازگشت است. اجرای تحلیل از این تنظیمات استفاده می‌کند و ممکن است سهمیه مصرف کند یا تحقیق جدید لازم داشته باشد؛ داده موجود در صورت امکان دوباره استفاده می‌شود.\nخواندن راهنما هیچ تحلیلی شروع نمی‌کند. اگر آماده‌اید «اجرا با تنظیمات من» را بزنید. سؤال: /support متن سؤال')
   ];
+  if(user.payments_active) lessons[5]='📅 6/7 — Purchases and weekly delivery\n'+PAYMENT_GUIDE;
   if(!Number.isSafeInteger(step)||step<0||step>=lessons.length) throw new Error('Invalid guide step');
   const rows:any[][]=[];
   if(step===0) rows.push([button('English','lang:en'),button('Deutsch','lang:de'),button('فارسی','lang:fa')]);
@@ -231,11 +236,11 @@ function editPrompt(field:string):string {
   return `${LABELS[field]}\nSend the new value in your next message.\nExample: ${examples[field]||'en or de'}${OPTIONAL.has(field)?'\nSend none to remove this filter.':''}\nUse /cancel to leave without changing it.`;
 }
 
-async function db(method: string, path: string, body?: unknown) {
+async function db(method: string, path: string, body?: unknown, timeout=10000) {
   const key = Deno.env.get('BOT_DATABASE_KEY') || env('SUPABASE_SERVICE_ROLE_KEY');
   const r = await fetch(env('SUPABASE_URL')+'/rest/v1/'+path, {
     method, headers:{apikey:key,'Content-Type':'application/json',Prefer:'return=representation'},
-    body:body === undefined ? undefined : JSON.stringify(body), signal:AbortSignal.timeout(10000)
+    body:body === undefined ? undefined : JSON.stringify(body), signal:AbortSignal.timeout(timeout)
   });
   if (!r.ok) throw new Error('Database operation failed');
   return r.status === 204 ? null : await r.json();
@@ -338,6 +343,32 @@ async function dispatch(job: string) {
   if (!r.ok) throw new Error('Dispatch failed');
 }
 
+const PAYMENT_GUIDE='One report is paid separately; no credit bundle is required. A 30-day pass covers every scheduled weekly delivery within its active dates (including a fifth weekly date when applicable), with no automatic renewal. Extra manual reports are separate purchases. Reopening delivered reports is free while their data remains stored (seven days). A failed single report or failed delivery is refunded in Stars. A delivered report may have missing fields, few matches or no matches; market coverage is not guaranteed. /paysupport contacts the operator about payments. Telegram support does not handle this bot’s purchases. The invoice shows the binding Stars amount; the euro cost of obtaining Stars varies.';
+function paymentExempt(user:any,admin:boolean) { return admin||user.pilot_free===true; }
+async function paymentShop(id:number,user:any,control:any,admin:boolean) {
+  if(paymentExempt(user,admin)) { await reply(id,'✅ Your current pilot/administrator access remains free. No payment is required.');return; }
+  if(!control?.payments_enabled||!control?.payment_terms_text||!Number.isInteger(control?.report_price_stars)||!Number.isInteger(control?.weekly_price_stars)) { await reply(id,'Payments are not open yet. Planned prices: €0.99 per report and €3.96 for 30 days of weekly reports. Checkout will show a fixed Stars price; its euro equivalent varies. Current pilot users remain free.');return; }
+  await reply(id,`⭐ Choose a purchase
+One report: ${control.report_price_stars} Stars
+30 days of weekly reports: ${control.weekly_price_stars} Stars
+
+`+PAYMENT_GUIDE,
+    {inline_keyboard:[[{text:'Read payment terms',callback_data:'pay:terms'}],...(user.payment_terms_version===1?[[{text:'Buy one report',callback_data:'pay:report'},{text:'Buy 30-day weekly pass',callback_data:'pay:weekly30'}]]:[])]});
+}
+async function paymentInvoice(id:number,user:any,control:any,product:string,admin:boolean) {
+  if(paymentExempt(user,admin)) { await reply(id,'Your pilot/administrator access is free. Use /run.');return; }
+  if(user.payment_terms_version!==1) { await reply(id,'Read /terms and accept the payment terms before buying.');return; }
+  const order=await db('POST','rpc/bot_order_create',{p_user:id,p_product:product});
+  if(order.error) { await reply(id,'Purchase not started: '+order.error+'. Use /paysupport if needed.');return; }
+  await tg('sendInvoice',{chat_id:id,title:product==='report'?'One property screening report':'30 days of weekly property reports',
+    description:product==='report'?'Report with your current settings, using available research. Missing data or no matches possible. Failed report/delivery refunded. Data stored for seven days.':'All scheduled weekly reports during 30 days, including a fifth weekly date if applicable. Manual runs extra. No auto-renewal. Limited search coverage; no guaranteed matches.',
+    payload:'housing:'+order.order_id,provider_token:'',currency:'XTR',prices:[{label:product==='report'?'One report':'30-day weekly pass',amount:order.amount_stars}],start_parameter:'purchase'});
+}
+function paymentOrderId(payload:unknown) {
+  const match=/^housing:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.exec(String(payload));
+  if(!match) throw new Error('Invalid payment payload');return match[1];
+}
+
 Deno.serve(async req => {
   let replyTo: number | undefined;
   if (req.method!=='POST') return new Response('Method not allowed',{status:405});
@@ -347,6 +378,15 @@ Deno.serve(async req => {
     const raw = await req.text();
     if (raw.length>16000) return new Response('Too large',{status:413});
     const update = JSON.parse(raw);
+    // Checkout updates have no message; answer promptly before normal chat routing.
+    if(update.pre_checkout_query) {
+      const q=update.pre_checkout_query;
+      try {
+        const result=await db('POST','rpc/bot_order_checkout',{p_user:Number(q.from.id),p_id:paymentOrderId(q.invoice_payload),p_amount:q.total_amount,p_currency:q.currency},5000);
+        await tg('answerPreCheckoutQuery',{pre_checkout_query_id:q.id,ok:result.ok===true,...(result.ok===true?{}:{error_message:'Purchase unavailable: '+result.error+'. Please request a new invoice or use /paysupport.'})});
+      } catch { await tg('answerPreCheckoutQuery',{pre_checkout_query_id:q.id,ok:false,error_message:'Checkout unavailable. Please try later; no report was purchased.'}); }
+      return new Response('ok');
+    }
     const cb = update.callback_query;
     const message = update.message || cb?.message;
     const sender = cb?.from || message?.from;
@@ -354,6 +394,21 @@ Deno.serve(async req => {
     const id = Number(sender.id);
     if (!Number.isSafeInteger(id) || message.chat.id!==id) return new Response('Forbidden',{status:403});
     replyTo=id;
+    if(message.refunded_payment) {
+      await db('POST','rpc/bot_order_refunded',{p_user:id,p_charge:message.refunded_payment.telegram_payment_charge_id});
+      return new Response('ok');
+    }
+    if(message.successful_payment) {
+      const paid=message.successful_payment;
+      const result=await db('POST','rpc/bot_order_paid',{p_user:id,p_id:paymentOrderId(paid.invoice_payload),p_amount:paid.total_amount,p_currency:paid.currency,p_charge:paid.telegram_payment_charge_id});
+      if(!result.duplicate) {
+        if(result.state==='refund_pending') await reply(id,'The purchase could not be fulfilled. A full Stars refund has been queued. Use /paysupport if you need help.');
+        else if(result.product==='weekly30') await reply(id,'✅ Weekly pass purchased. Active from '+result.starts_at+' until '+result.ends_at+'. All weekly delivery dates in that interval are included. No automatic renewal; extra manual reports are separate.');
+        else await reply(id,'✅ Payment received. Your report is queued and will arrive here. Failed analysis or delivery is refunded in Stars.');
+      }
+      if(result.job_id||result.state==='refund_pending') { try { await dispatch(result.job_id||''); } catch { /* Hourly worker recovers the durable order/job/refund. */ } }
+      return new Response('ok');
+    }
     if (cb) await tg('answerCallbackQuery',{callback_query_id:cb.id});
     const admin = Number(env('ADMIN_USER_ID'));
     let action=cb?String(cb.data):'';
@@ -429,11 +484,46 @@ Deno.serve(async req => {
     }
     const user = rows[0];
     user.admin_unlimited=adminUnlimited;
-    user.pilot_locked=Boolean((await db('GET','bot_control?id=eq.1'))[0]?.pilot_locked);
+    const billingControl=(await db('GET','bot_control?id=eq.1'))[0];
+    user.pilot_locked=Boolean(billingControl?.pilot_locked);
+    user.payments_active=Boolean(billingControl?.payments_enabled)&&!paymentExempt(user,adminUnlimited);
     const text = String(cb ? '/'+cb.data : message.text || '').slice(0,2500).trim();
     const [rawcmd, ...parts] = text.split(/\s+/);
     const cmd = rawcmd.split('@')[0].toLowerCase();
     const rest = parts.join(' ');
+    if(cmd==='/terms'||action==='pay:terms') {
+      await reply(id,(billingControl?.payment_terms_text||'Payments are not yet open. The operator’s payment terms will be displayed here before checkout.')+'\n\n'+PAYMENT_GUIDE,
+        billingControl?.payments_enabled&&billingControl?.payment_terms_text?{inline_keyboard:[[{text:'I agree to the payment terms',callback_data:'pay:accept'}]]}:undefined);
+      return new Response('ok');
+    }
+    if(action==='pay:accept') {
+      if(!billingControl?.payments_enabled||!billingControl?.payment_terms_text) { await reply(id,'Payments are not open yet.');return new Response('ok'); }
+      await db('PATCH','bot_users?user_id=eq.'+id,{payment_terms_version:1});user.payment_terms_version=1;
+      await paymentShop(id,user,billingControl,adminUnlimited);return new Response('ok');
+    }
+    if(cmd==='/buy'||action==='buy'||action==='pay:report'||action==='pay:weekly30') {
+      if(action.startsWith('pay:')&&user.settings._guide_version!==1) { await reply(id,'Complete /guide first. No payment started.');return new Response('ok'); }
+      if(action==='pay:report'||action==='pay:weekly30') await paymentInvoice(id,user,billingControl,action.slice(4),adminUnlimited);
+      else await paymentShop(id,user,billingControl,adminUnlimited);
+      return new Response('ok');
+    }
+    if(id===admin&&cmd==='/refund') {
+      if(!/^[0-9a-f-]{36}$/.test(rest)) { await reply(id,'Use /refund ORDER_UUID (from /payments).');return new Response('ok'); }
+      const orders=await db('GET','bot_orders?id=eq.'+rest);
+      if(!orders[0]||!['paid','delivered','refund_pending'].includes(orders[0].state)) { await reply(id,'No refundable purchase found.');return new Response('ok'); }
+      const active=orders[0].job_id?await db('GET','bot_jobs?id=eq.'+orders[0].job_id+'&status=in.(queued,running)'):[];
+      if(active.length) { await reply(id,'Wait until the running report finishes before refunding this order.');return new Response('ok'); }
+      await db('PATCH','bot_orders?id=eq.'+rest+'&state=in.(paid,delivered,refund_pending)',{state:'refund_pending'});
+      await reply(id,'Full Stars refund queued. Weekly access from that pass will end.');
+      try { await dispatch(''); } catch { /* Durable refund remains queued. */ }
+      return new Response('ok');
+    }
+    if(id===admin&&cmd==='/payments') {
+      if(!Object.hasOwn(billingControl||{},'payments_enabled')) { await reply(id,'Apply migration 007 before payment setup.');return new Response('ok'); }
+      const orders=await db('GET','bot_orders?order=created_at.desc&limit=10&select=id,product,amount_stars,state');
+      await reply(id,'Payments: '+(billingControl.payments_enabled?'enabled':'off')+'\nConfigured Stars: '+billingControl.report_price_stars+' per report / '+billingControl.weekly_price_stars+' per 30 days\nCurrent pilot users are exempt.\n'+orders.map((o:any)=>`${o.id} · ${o.product} · ${o.amount_stars} Stars · ${o.state}`).join('\n'));
+      return new Response('ok');
+    }
     if(user.pilot_locked && (['/set','/location','/areas','/exclude','/schedule','/weekly'].includes(cmd) || /^(menu:|edit:|lang:|day:|weekly:)/.test(action) || (!cb&&!text.startsWith('/')&&user.settings._edit))) {
       await reply(id,'🔒 Pilot settings and weekly schedule are fixed for all users. Reports are scheduled Monday at 09:00 Europe/Berlin. Use /settings to review the preset or /support for help.');
       return new Response('ok');
@@ -575,8 +665,8 @@ Deno.serve(async req => {
       await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_guide_step:0,_guide_seen:Math.max(0,Number(user.settings._guide_seen??-1))}});
       await reply(id,guide.text,guide.keyboard);
     } else if (cmd==='/help') {
-      await reply(id,(user.settings.language==='fa'?HELP_FA:HELP)+'\n\n'+(user.settings.language==='fa'?CALCULATIONS_FA:user.settings.language==='de'?CALCULATIONS_DE:CALCULATIONS_EN),buttons);
-    } else if (cmd==='/support') {
+      await reply(id,(user.settings.language==='fa'?HELP_FA:HELP).replace(user.payments_active?'Free: 1 report/week. Paid: up to 7. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. Manual membership during pilot.':'__unused__',user.payments_active?'Paid reports are purchased individually; the 30-day pass covers weekly deliveries.':'')+(user.payments_active?'\n\n'+PAYMENT_GUIDE:'')+'\n\n'+(user.settings.language==='fa'?CALCULATIONS_FA:user.settings.language==='de'?CALCULATIONS_DE:CALCULATIONS_EN),buttons);
+    } else if (cmd==='/support'||cmd==='/paysupport') {
       if (!rest) await reply(id,'Send /support followed by your question. It is forwarded to the administrator; no AI charge. Response is manual.');
       else {
         const existing = await db('GET','bot_updates?update_id=eq.'+Number(update.update_id));
@@ -657,6 +747,7 @@ Deno.serve(async req => {
       const week=d.toISOString().slice(0,10);
       const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&week_start=eq.'+week+'&select=status,charged_usd,usage');
       const used=jobs.filter((j:any)=>j.usage?.shared_hit!==true&&(j.status!=='failed'||Number(j.charged_usd)>0)).length;
+      if(user.payments_active) { await paymentShop(id,user,billingControl,adminUnlimited);return new Response('ok'); }
       await reply(id,adminUnlimited?`Administrator: no weekly report limit.\nReports this week: ${used}.\nMonthly spending cap and one active analysis at a time still apply.`:`Plan: ${user.plan}\nUsed: ${used} / ${user.plan==='paid'?7:1} this week. Reset Monday 00:00 Europe/Berlin.`);
     } else if (cmd==='/last') {
       const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&status=eq.complete&order=finished_at.desc&limit=1&select=id,report');
@@ -688,7 +779,8 @@ Deno.serve(async req => {
         return new Response('ok');
       }
       const result=await db('POST','rpc/bot_enqueue',{p_user:id,p_key:(refresh?'refresh:':'telegram:')+update.update_id});
-      if (result.error) await reply(id,'Analysis not started: '+result.error+'. Use /support if you need help.');
+      if (result.error==='payment_required') await paymentShop(id,user,control,adminUnlimited);
+      else if (result.error) await reply(id,'Analysis not started: '+result.error+'. Use /support if you need help.');
       else if (result.duplicate) await reply(id,'This request is already recorded. Use /last for the latest report.');
       else {
         try { await dispatch(result.job_id); await reply(id,refresh?'Additional paid research queued within the monthly cap. Saved apartments will be retained.':'Analysis queued. Results will arrive here; GitHub may take a few minutes.'); }

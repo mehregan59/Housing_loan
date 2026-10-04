@@ -332,3 +332,28 @@ assert.equal(users.get(456).settings.max_price_eur,pilotOldPrice);
 await sendAs(456,'menu:search',true);assert.match(messages.at(-1).text,/Pilot settings and weekly schedule are fixed/);
 await sendAs(456,'/schedule tue 20:00 Europe/Berlin');assert.match(messages.at(-1).text,/Pilot settings and weekly schedule are fixed/);
 console.log('Pilot edit and schedule locks passed');
+
+// Payment updates have no ordinary message; validate checkout and durable success.
+const paymentCalls=[];
+globalThis.fetch=async(url,options={})=>{
+  const body=options.body?JSON.parse(options.body):{};
+  paymentCalls.push({url,body});
+  if(url.endsWith('/rpc/bot_order_checkout')) return Response.json(body.p_amount===50&&body.p_currency==='XTR'?{ok:true}:{error:'invalid_invoice'});
+  if(url.endsWith('/rpc/bot_order_paid')) return Response.json({duplicate:true,state:'paid',product:'weekly30'});
+  if(url.startsWith('https://api.telegram.org/')) return Response.json({ok:true});
+  throw new Error('Unexpected payment endpoint');
+};
+async function paymentUpdate(payload) {
+  const response=await handler(new Request('https://webhook.test',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':'test-secret'},body:JSON.stringify(payload)}));
+  assert.equal(response.status,200);
+}
+const payload='housing:00000000-0000-4000-8000-000000000001';
+await paymentUpdate({pre_checkout_query:{id:'checkout',from:{id:321},invoice_payload:payload,total_amount:50,currency:'XTR'}});
+assert.equal(paymentCalls.at(-1).body.ok,true);
+await paymentUpdate({pre_checkout_query:{id:'checkout-bad',from:{id:321},invoice_payload:payload,total_amount:49,currency:'XTR'}});
+assert.equal(paymentCalls.at(-1).body.ok,false);
+const count=paymentCalls.length;
+await paymentUpdate({message:{chat:{id:321,type:'private'},from:{id:321},successful_payment:{invoice_payload:payload,total_amount:50,currency:'XTR',telegram_payment_charge_id:'charge'}}});
+assert.equal(paymentCalls.length,count+1,'Duplicate payment must not send or dispatch again');
+assert.ok(paymentCalls.at(-1).url.endsWith('/rpc/bot_order_paid'));
+console.log('Stars checkout, wrong-price rejection and duplicate payment routing passed');

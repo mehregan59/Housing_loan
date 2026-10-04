@@ -132,7 +132,7 @@ def merge_leads(*groups,excluded=()):
 def detail_prompt(settings,radius,now,leads,verified_pool):
     prompt=json.dumps({'today':str(now.date()),'location':settings['location'],'search_radius_km':radius,
                        'individual_listing_urls':leads},ensure_ascii=False)
-    prompt+='\nOpen only these individual apartment URLs and extract their price, size and available fields into the compact schema. Do NOT search for replacement apartments, mortgage rates or price benchmarks. If blocked/removed/unsupported, omit that apartment. Verify German town/state from the listing. Missing optional values stay unknown. Store municipality coordinates once in places when independently sourced. If no verified points are provided, prioritise sourcing the requested search centre and reuse it for apartments in that municipality. No calculations. Keep bilingual risks under 80 characters and estimate basis under 100 characters. Finish valid JSON; these are at most five apartments.'
+    prompt+='\nOpen only these individual apartment URLs and extract their price, size and available fields into the compact schema. Do NOT search for replacement apartments, mortgage rates or price benchmarks. If blocked/removed/unsupported, omit that apartment. Verify German town/state from the listing; use Germany for country. If a property is sold only as a package, price_eur must be the advertised minimum total package purchase price, never an unavailable individual-unit price. Missing optional values stay unknown. Store municipality coordinates once in places when independently sourced. If no verified points are provided, prioritise sourcing the requested search centre and reuse it for apartments in that municipality. No calculations. Keep bilingual risks under 80 characters and estimate basis under 100 characters. Finish valid JSON; these are at most five apartments.'
     if verified_pool: prompt+='\nPreviously source-verified municipality points: '+json.dumps([verified_pool['center']]+verified_pool.get('places',[])[:30],ensure_ascii=False)
     return prompt
 
@@ -145,6 +145,38 @@ def merge_listing_batches(old,new):
     center=new['center'] if market.point(new['center']) else old['center']
     return {**old,**new,'center':center,'listings':list(merged.values()),'places':list(places.values()),
             'research_partial':old.get('research_partial',False) or new.get('research_partial',False)}
+
+
+def repair_cached_extractions(db,now=None):
+    """Replay paid source evidence without any API call or extending retention."""
+    now=now or datetime.now(timezone.utc)
+    cutoff=quote((now-timedelta(days=7)).isoformat(),safe='')
+    rows=db.request('GET','bot_market_cache?kind=eq.pool&expires_at=gt.'+quote(now.isoformat(),safe=''))
+    jobs=db.request('GET','bot_jobs?finished_at=gt.'+cutoff+'&usage->checkpoints=not.is.null&select=usage,finished_at&order=finished_at.asc&limit=500')
+    added=changed=0
+    for row in rows:
+        original=row['payload'];payload=dict(original)
+        for job in jobs:
+            usage=job.get('usage') or {}
+            expiry=usage.get('data_expires_at')
+            if not expiry or datetime.fromisoformat(expiry.replace('Z','+00:00'))<=now: continue
+            for checkpoint in usage.get('checkpoints',[]):
+                raw=checkpoint.get('extracted') or {}
+                if checkpoint.get('stage')!='pool' or market.location_norm((raw.get('center') or {}).get('name',''))!=market.location_norm(payload['center']['name']): continue
+                validated=market.validate_pool(expand_discovery(raw),checkpoint.get('sources',[]),checkpoint.get('opened_urls',[]))
+                # Repair only the country-alias rejection; package-only units
+                # with an unknown total price remain unverified.
+                validated['listings']=[x for x in validated['listings'] if not any(word in market.norm(x.get('risk_en','')+' '+x.get('title','')) for word in ('package only','package-only','viererpaket'))]
+                before=len(payload['listings'])
+                payload=merge_listing_batches(payload,validated)
+                added+=len(payload['listings'])-before
+        if payload['listings']!=original['listings']:
+            payload['research_partial']=bool(payload.get('pending_leads')) or market.point(payload['center']) is None
+            payload['collection_stats']={**payload.get('collection_stats',{}),'verified':len(payload['listings']),'recovered_without_api':len(payload['listings'])-len(original['listings'])}
+            db.request('PATCH','bot_market_cache?cache_key=eq.'+quote(row['cache_key'],safe=''),{'payload':payload})
+            changed+=1
+    if changed: db.request('DELETE','bot_shared_reports?expires_at=gt.'+quote(now.isoformat(),safe=''))
+    return {'recovered':added,'pools_updated':changed}
 
 
 def analyse(db,job,meter):
@@ -209,6 +241,7 @@ def analyse(db,job,meter):
         if kind=='links':
             return validate_leads(extracted,sources)
         validated=market.validate_pool(expand_discovery(extracted),sources,opened)
+        checkpoint['validation']={'retained':len(validated['listings']),'rejected':validated['rejected_unverified'],'reasons':validated['rejection_reasons']}
         # These points were source-validated when the fresh public cache was
         # created. Reuse exact saved points, never model-asserted new coordinates.
         if verified_pool:
@@ -286,6 +319,7 @@ def analyse(db,job,meter):
                 leads=[]
             if leads is not None: pending=merge_leads(pending,leads,excluded=known)
         pool=None
+        discovered_count=len(pending); rejected_count=0; extraction_count=0
         completed_batches=attempted_batches=0
         remaining_tools=25-sum(max(4,x.get('search_calls',0)) for x in meter['calls'] if x.get('stage')=='links')
         stop_reason='queue_exhausted'
@@ -315,6 +349,8 @@ def analyse(db,job,meter):
                 pool['research_partial']=True
                 break
             if extra is None: break
+            extraction_count+=len(extra['listings'])+extra.get('rejected_unverified',0)
+            rejected_count+=extra.get('rejected_unverified',0)
             # Never admit a model-suggested replacement outside this queue batch.
             selected_urls=market.source_set(x['url'] for x in selected)
             extra['listings']=[x for x in extra['listings'] if market.url(x['url']) in selected_urls]
@@ -338,19 +374,26 @@ def analyse(db,job,meter):
             return note+'\n\n'+report,urls,True
         if pool is None and inherited:
             pool=dict(inherited)
+        if pool is None and meter.get('reserve_refused'):
+            meter['unfulfilled']=True
         if pool is None and pending:
             pool={'center':{'name':s['location'],'lat':None,'lon':None,'source_url':''},
                   'places':[],'listings':[],'research_partial':True}
         if pool is None:
+            meter['unfulfilled']=True
             message='Suchbudget nicht verfügbar. Kein aktueller gemeinsamer Bestand deckt Ihren Standort ab. Ihre Grenzen wurden nicht geändert. Mit /last können Sie einen gespeicherten Bericht abrufen.' if s.get('language')=='de' else 'Search budget unavailable. No fresh shared listing pool covers your location. Your limits have not been changed. Try /last for a saved report.'
             return (message+'\n\n'+market.DISCLAIMER,[],False)
         if supplement:
+            current_partial=pool.get('research_partial',False)
             pool={**merge_listing_batches(supplement['payload'],pool),'retained_expires_at':supplement['expires_at'],'oldest_researched_at':supplement['created_at']}
+            # Current refresh status must not inherit an old truncation forever.
+            pool['research_partial']=current_partial
             if market.point(pool['center']) is None: pool['center']=supplement['payload']['center']
         pool['discovery_batches']={'planned':attempted_batches,'attempted':attempted_batches,'completed':completed_batches}
         pool['pending_leads']=merge_leads(pending,excluded=[x['url'] for x in pool['listings']])
         pool['attempted_lead_urls']=attempted_urls
-        pool['collection_stats']={'queued':len(pool['pending_leads']),'verified':len(pool['listings']),'stop_reason':stop_reason}
+        pool['research_partial']=pool.get('research_partial',False) or bool(pool['pending_leads'])
+        pool['collection_stats']={'discovered':discovered_count,'extracted':extraction_count,'rejected':rejected_count,'newly_retained':len(market.source_set(x['url'] for x in pool['listings'])-market.source_set(old_urls)),'queued':len(pool['pending_leads']),'verified':len(pool['listings']),'stop_reason':stop_reason}
         pool['search_scope']=market.search_scope(s)
         row=save(key,'pool',pool,radius);center=market.point(pool['center'])
         if center is None:

@@ -202,6 +202,9 @@ def run_job(db, job_id):
             request_rows=db.request('GET','bot_jobs?id=eq.'+job_id+'&select=request_key')
             job['force_refresh']=str(job['user_id'])==os.environ['ADMIN_USER_ID'] and bool(request_rows) and request_rows[0].get('request_key','').startswith('refresh:')
             report, urls, cache_hit = analyse(db, job, meter)
+            if job.get('billing_kind')=='report' and meter.get('unfulfilled'):
+                from research import ResearchDataError
+                raise ResearchDataError('ReportNotFulfilled')
             cost = round(meter['cost'],6)
             usage = {'pipeline':2, 'cache_hit':cache_hit, 'research_calls':meter['calls'], 'report_signature':meter.get('report_signature'), 'shared_hit':meter.get('shared_hit',False), 'shared_publish_failed':meter.get('shared_publish_failed',False)}
             usage.update(data_expires_at=meter.get('data_expires_at'),collection_stats=meter.get('collection_stats',{}),partial=meter.get('partial',False),warnings=meter.get('warnings',[]),checkpoints=meter.get('checkpoints',[]),stage=meter.get('stage'))
@@ -235,10 +238,12 @@ def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
     db.rpc('bot_finish', {'p_id': job_id, 'p_status':status, 'p_cost':cost,
         'p_report':report if status=='complete' else None, 'p_usage':usage,
         'p_error':error, 'p_urls':urls if status=='complete' else []})
+    delivered=False
     if status == 'complete':
         try:
             db.report(job['user_id'], report,job_id,job['settings'].get('language','en'))
             db.request('PATCH', 'bot_jobs?id=eq.'+job_id, {'delivered':True})
+            delivered=True
             control = db.request('GET','bot_control?id=eq.1')[0]
             if control['channel_enabled'] and str(job['user_id']) == os.environ['ADMIN_USER_ID'] and os.getenv('CHANNEL_ID'):
                 db.telegram(os.environ['CHANNEL_ID'], report)
@@ -252,6 +257,9 @@ def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
                 db.telegram(job['user_id'], 'Analysis paused until the cost-saving upgrade is activated. No API call was made. Use /last for your saved report.' if error=='ResearchUpgradeInactive' else '⚠️ Analysis failed. The administrator has been notified; no automatic paid retry.')
         except Exception:
             pass
+    if job.get('billing_kind')=='report':
+        from payments import settle_report
+        settle_report(db,job_id,delivered)
     ledger = db.request('GET', 'bot_jobs?created_at=gte.'+datetime.now(timezone.utc).strftime('%Y-%m-01T00:00:00Z')+'&select=charged_usd,reserved_usd')
     total = sum(float(x['charged_usd'] if x['charged_usd'] is not None else x['reserved_usd']) for x in ledger)
     try:
@@ -275,6 +283,9 @@ def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
 
 def sweep(db):
     control = db.request('GET', 'bot_control?id=eq.1')[0]
+    if 'payments_enabled' in control:
+        from payments import process_refunds
+        process_refunds(db)
     if not control['enabled']:
         return
     now = datetime.now(timezone.utc)
@@ -349,12 +360,19 @@ def cleanup_apartment_data(db,now=None):
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('mode', choices=['sweep','job','health','guide-all','cleanup'])
+    p.add_argument('mode', choices=['sweep','job','health','guide-all','cleanup','repair-cache','payment-refunds'])
     p.add_argument('--job-id')
     args = p.parse_args()
     db = Backend()
     try:
-        if args.mode == 'cleanup':
+        if args.mode == 'payment-refunds':
+            from payments import process_refunds
+            process_refunds(db)
+        elif args.mode == 'repair-cache':
+            from research import repair_cached_extractions
+            result=repair_cached_extractions(db)
+            db.admin('🔧 Saved research repaired without an AI call: '+str(result['recovered'])+' apartments recovered; '+str(result['pools_updated'])+' pools updated. Send /run to recalculate the report from saved data.')
+        elif args.mode == 'cleanup':
             cleanup_apartment_data(db)
         elif args.mode == 'guide-all':
             notify_guide_users(db)

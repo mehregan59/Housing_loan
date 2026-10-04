@@ -66,6 +66,27 @@ def collection_database(old=None):
 
 
 class MarketTests(unittest.TestCase):
+    def test_country_aliases_preserve_verified_listings_but_not_foreign(self):
+        for country in ('Deutschland','Germany',' DE ','DEU'):
+            result=market.validate_pool(pool([listing(country=country)]),{SOURCE,GEO,TAX},{SOURCE})
+            self.assertEqual(len(result['listings']),1)
+            self.assertEqual(result['listings'][0]['country'],'Germany')
+        result=market.validate_pool(pool([listing(country='France')]),{SOURCE,GEO,TAX},{SOURCE})
+        self.assertEqual(result['rejection_reasons'],{'country_unsupported':1})
+
+    def test_repair_reuses_paid_evidence_without_ai_or_extending_expiry(self):
+        old=row();raw=pool([listing(url=SOURCE+'new',country='Deutschland')])
+        evidence={'usage':{'data_expires_at':old['expires_at'],'checkpoints':[{'stage':'pool','extracted':raw,'sources':[SOURCE+'new',GEO,TAX],'opened_urls':[SOURCE+'new']}]}}
+        db=Mock()
+        db.request.side_effect=lambda method,path,data=None: [old] if method=='GET' and path.startswith('bot_market_cache') else [evidence] if method=='GET' else None
+        with patch('openai.OpenAI') as api:
+            result=research.repair_cached_extractions(db,NOW)
+        api.assert_not_called()
+        self.assertEqual(result['recovered'],1)
+        saved=next(c.args[2] for c in db.request.call_args_list if c.args[0]=='PATCH')
+        self.assertNotIn('expires_at',saved)
+        self.assertEqual(len(saved['payload']['listings']),2)
+
     def test_reference_arithmetic_and_stress(self):
         c=market.calculate(listing(),S,R)
         self.assertAlmostEqual(c['loan'],165855)

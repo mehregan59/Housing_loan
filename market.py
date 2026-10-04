@@ -8,8 +8,6 @@ from datetime import datetime, timedelta, timezone, date
 from urllib.parse import urlsplit, urlunsplit
 
 VERSION = 2
-TARGET_LISTINGS = 20
-MAX_LISTINGS = 30
 TTL_DAYS = 7
 DISCLAIMER = 'Estimates only; general information, not financial advice or a financing commitment. Verify independently before deciding.'
 
@@ -21,6 +19,10 @@ def norm(s):
 def location_norm(s):
     name=norm(s)
     return 'freiburg' if name in ('freiburg','freiburg im breisgau','freiburg i. br.') else name
+
+
+def german_country(value):
+    return norm(value) in ('germany','deutschland','de','deu','bundesrepublik deutschland','federal republic of germany')
 
 
 def source_set(sources):
@@ -110,19 +112,22 @@ def validate_pool(data, sources, opened_urls):
         except (ValueError,KeyError,TypeError): pass
     if not places or center not in places:
         center={**center,'lat':None,'lon':None}
-    listings=[]; seen=set(); rejected=0
+    listings=[]; seen=set(); rejected=0; reasons={}
     optional_unknown=0
     for x in data.get('listings',[]):
         try:
             u=url(x['url'])
             if u in seen: continue
-            if u not in allowed or u not in opened or not x['opened'] or x['country']!='Germany': raise ValueError()
+            if u not in allowed: raise ValueError('source_missing')
+            if u not in opened or not x['opened']: raise ValueError('page_not_opened')
+            if not german_country(x['country']): raise ValueError('country_unsupported')
             x=dict(x)
+            x['country']='Germany'
             try: located=point(x) and url(x['location_source_url']) in allowed
             except (ValueError,KeyError,TypeError): located=False
             if not located: x.update(lat=None,lon=None)
-            if not number(x['price_eur'],1) or not number(x['size_m2'],1,2000): raise ValueError()
-            if x['broker_pct'] is not None and not number(x['broker_pct'],0,15): raise ValueError()
+            if not number(x['price_eur'],1) or not number(x['size_m2'],1,2000): raise ValueError('price_or_size_missing')
+            if x['broker_pct'] is not None and not number(x['broker_pct'],0,15): raise ValueError('commission_invalid')
             try: tax_ok=x['tax_pct'] is None or (number(x['tax_pct'],3.5,6.5) and url(x['tax_source_url']) in allowed and official_tax_source(x['tax_source_url']))
             except (ValueError,KeyError,TypeError): tax_ok=False
             if not tax_ok: x['tax_pct']=None;optional_unknown+=1
@@ -132,9 +137,11 @@ def validate_pool(data, sources, opened_urls):
                 except (ValueError,KeyError,TypeError):
                     x[field]={'value':None,'kind':'unknown','basis':'','source_url':''};optional_unknown+=1
             seen.add(u); listings.append(x)
-        except (ValueError,KeyError,TypeError):
+        except (ValueError,KeyError,TypeError) as exc:
             rejected+=1
-    return {**data,'center':center,'places':places,'listings':listings,'rejected_unverified':rejected,'optional_fields_unknown':optional_unknown}
+            reason=str(exc) if str(exc) in ('source_missing','page_not_opened','country_unsupported','price_or_size_missing','commission_invalid') else 'invalid_fields'
+            reasons[reason]=reasons.get(reason,0)+1
+    return {**data,'center':center,'places':places,'listings':listings,'rejected_unverified':rejected,'rejection_reasons':reasons,'optional_fields_unknown':optional_unknown}
 
 
 def validate_rates(data,sources,now):
@@ -317,6 +324,7 @@ def render(pool,s,rates,center,checked_at,cache_hit):
            t(f'{len(pool["listings"])} researched apartments available; search coverage is limited.',f'{len(pool["listings"])} recherchierte Wohnungen verfügbar; Suche ist nicht vollständig.'),
            *([t(f'Collection stages completed: {pool["discovery_batches"]["completed"]}/{pool["discovery_batches"]["planned"]}. This is not an exhaustive market search.',f'Sammelphasen abgeschlossen: {pool["discovery_batches"]["completed"]}/{pool["discovery_batches"]["planned"]}. Keine vollständige Marktsuche.')] if pool.get('discovery_batches',{}).get('planned',0)>0 else []),
            *([t(f'{len(pool["pending_leads"])} discovered links await individual-page verification; they are not included as matches.',f'{len(pool["pending_leads"])} gefundene Links warten auf Einzelprüfung; noch keine passenden Angebote.')] if pool.get('pending_leads') else []),
+           *([t(f'Latest collection: {pool["collection_stats"]["discovered"]} links found; {pool["collection_stats"].get("newly_retained",0)} new apartments retained; {pool["collection_stats"].get("rejected",0)} extracted records rejected by verification.',f'Letzte Sammlung: {pool["collection_stats"]["discovered"]} Links gefunden; {pool["collection_stats"].get("newly_retained",0)} neue Wohnungen übernommen; {pool["collection_stats"].get("rejected",0)} Datensätze bei Prüfung abgelehnt.')] if 'discovered' in pool.get('collection_stats',{}) else []),
            t('Gross rental yield is before costs, not profit.', 'Bruttomietrendite ist vor Kosten, kein Gewinn.'),
            t(f'{len(m)} candidates within known limits; {len(f)} nearby alternatives.',f'{len(m)} Angebote innerhalb bekannter Grenzen; {len(f)} ähnliche Alternativen.')]
     if not m:
