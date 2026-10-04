@@ -151,7 +151,7 @@ class MarketTests(unittest.TestCase):
             dt.now.return_value=NOW;api.return_value.responses.create.return_value=response
             text,urls,hit=research.analyse(db,{'id':'job','user_id':123,'settings':S,'force_refresh':True,'shared_reports_enabled':True},meter)
         self.assertEqual(set(urls),{SOURCE,SOURCE+'new'})
-        self.assertEqual(api.return_value.responses.create.call_count,1)
+        self.assertEqual(api.return_value.responses.create.call_count,3)
         self.assertNotIn('bot_shared_get',[c.args[0] for c in db.rpc.call_args_list])
         self.assertIn('already_collected_urls',api.return_value.responses.create.call_args.kwargs['input'])
         saved=[c.args[2] for c in db.request.call_args_list if c.args[0]=='POST' and c.args[1]=='bot_market_cache'][0]
@@ -300,17 +300,26 @@ class MarketTests(unittest.TestCase):
         db.request.side_effect=lambda method,path,data=None: [] if method=='GET' else None
         db.rpc.return_value=True
         response=Mock()
-        response.model_dump.side_effect=[
-            {'status':'completed','usage':{'input_tokens':1000,'output_tokens':200},'output':[{'type':'web_search_call','action':{'type':'search','sources':[{'url':x['source_url']} for x in R['rates']]}}]},
-            {'status':'completed','usage':{'input_tokens':2000,'output_tokens':600},'output':[{'type':'web_search_call','action':{'type':'open_page','url':SOURCE,'sources':[{'url':GEO},{'url':TAX}]}}]}]
-        type(response).output_text=__import__('unittest').mock.PropertyMock(side_effect=[__import__('json').dumps(R),__import__('json').dumps(pool())])
+        import json
+        responses=[{'status':'completed','usage':{'input_tokens':1000,'output_tokens':200},'output':[{'type':'web_search_call','action':{'type':'search','sources':[{'url':x['source_url']} for x in R['rates']]}}]}]
+        texts=[json.dumps(R)]
+        for batch in range(3):
+            batch_url=SOURCE+str(batch)
+            responses.append({'status':'completed','usage':{'input_tokens':2000,'output_tokens':600},'output':[{'type':'web_search_call','action':{'type':'open_page','url':batch_url,'sources':[{'url':GEO},{'url':TAX}]}}]})
+            texts.append(json.dumps(pool([listing(url=batch_url)])))
+        response.model_dump.side_effect=responses
+        type(response).output_text=__import__('unittest').mock.PropertyMock(side_effect=texts)
         client=Mock();client.responses.create.return_value=response
         meter={'pending':False,'cost':0,'calls':[]}
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI',return_value=client):
             dt.now.return_value=NOW
             text,urls,hit=research.analyse(db,{'id':'job','settings':S,'user_id':123},meter)
-        self.assertEqual(client.responses.create.call_count,2);self.assertFalse(hit)
-        self.assertEqual(urls,[SOURCE]);self.assertGreater(meter['cost'],0);self.assertFalse(meter['pending'])
+        self.assertEqual(client.responses.create.call_count,4);self.assertFalse(hit)
+        self.assertEqual(set(urls),{SOURCE+str(i) for i in range(3)});self.assertGreater(meter['cost'],0);self.assertFalse(meter['pending'])
+        calls=client.responses.create.call_args_list[1:]
+        self.assertEqual(sum(c.kwargs['max_tool_calls'] for c in calls),24)
+        self.assertEqual([json.loads(c.kwargs['input'].split('\n')[0])['priority_sites'] for c in calls],list(research.PORTAL_GROUPS))
+        self.assertIn(SOURCE+'0',json.loads(calls[1].kwargs['input'].split('\n')[0])['already_collected_urls'])
         for call in client.responses.create.call_args_list:
             self.assertEqual(call.kwargs['tools'],[{'type':'web_search','search_context_size':'low'}])
             self.assertNotIn('max_loan_eur',call.kwargs['input'])
@@ -409,6 +418,31 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(meter['calls'][0]['incomplete_reason'],'max_output_tokens')
         self.assertTrue(meter['checkpoints']);self.assertFalse(meter['pending'])
         self.assertTrue(any(c.args[0]=='PATCH' and c.args[1]=='bot_jobs?id=eq.job' for c in db.request.call_args_list))
+
+    def test_batch_towns_and_dedup_preserve_every_property(self):
+        import json
+        p=pool([listing(url=SOURCE+'?utm_source=a')])
+        p['places'] += [{'name':'Nearby','lat':48.1,'lon':7.85,'source_url':GEO},
+                        {'name':'Far away','lat':53,'lon':10,'source_url':GEO}]
+        task=json.loads(research.listing_batch_prompt(S,100,NOW,1,[SOURCE],p).split('\n')[0])
+        self.assertIn('Nearby',task['priority_towns']);self.assertNotIn('Far away',task['priority_towns'])
+        merged=research.merge_listing_batches(p,pool([listing(url=SOURCE),listing(url=SOURCE+'new')]))
+        self.assertEqual(len(merged['listings']),2)
+        text,urls=market.render(pool([listing(url=SOURCE+str(i)) for i in range(45)]),{**S,'max_price_eur':1000000,'max_loan_eur':1200000},R,(48,7.85),NOW.isoformat(),False)
+        self.assertEqual(len(urls),45)
+
+    def test_expansion_cost_guard_stops_extra_calls(self):
+        import json
+        db=Mock();db.rpc.return_value=True
+        db.request.side_effect=lambda method,path,data=None: [row('rates')] if method=='GET' and path.startswith('bot_market_cache?cache_key=eq.rates') else [] if method=='GET' else None
+        response=Mock();response.output_text=json.dumps(pool())
+        response.model_dump.return_value={'status':'completed','usage':{'input_tokens':160000,'output_tokens':1000},'output':[{'type':'web_search_call','action':{'type':'open_page','url':SOURCE,'sources':[{'url':GEO},{'url':TAX}]}}]}
+        meter={'pending':False,'cost':0,'calls':[]}
+        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
+            dt.now.return_value=NOW;api.return_value.responses.create.return_value=response
+            report,urls,_=research.analyse(db,{'id':'job','settings':S,'user_id':123},meter)
+        self.assertEqual(api.return_value.responses.create.call_count,1)
+        self.assertEqual(urls,[SOURCE]);self.assertIn('ExpansionStoppedAtCostOrOutputLimit',meter['warnings'])
 
     def test_tracking_url_deduplication(self):
         self.assertEqual(market.url(SOURCE+'?utm_source=test'),SOURCE)
