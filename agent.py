@@ -4,6 +4,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
@@ -122,7 +123,8 @@ class Backend:
         return self.request('POST', 'rpc/'+name, data)
 
     def telegram(self, user, text):
-        for part in chunks(text):
+        for index,part in enumerate(chunks(text)):
+            if index: time.sleep(1.1)
             r = self.http.post('https://api.telegram.org/bot'+os.environ['TELEGRAM_BOT_TOKEN']+'/sendMessage',
                 json={'chat_id': user, 'text': part, 'link_preview_options': {'is_disabled': True}})
             if not r.is_success or not r.json().get('ok'):

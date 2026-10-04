@@ -34,6 +34,17 @@ class Tests(unittest.TestCase):
         self.assertEqual(''.join(parts),text)
         self.assertTrue(all(len(x.encode('utf-16-le'))//2<=3900 for x in parts))
 
+    def test_long_report_delivery_sends_all_parts_with_pacing(self):
+        db=agent.Backend.__new__(agent.Backend)
+        db.http=Mock()
+        db.http.post.return_value=Mock(is_success=True,json=lambda:{'ok':True})
+        text='🏠 Apartment details\n'*1500
+        with patch.dict('os.environ',{'TELEGRAM_BOT_TOKEN':'test'}),patch('agent.time.sleep') as pause:
+            db.telegram(123,text)
+        sent=[c.kwargs['json']['text'] for c in db.http.post.call_args_list]
+        self.assertEqual(''.join(sent),text)
+        self.assertEqual(pause.call_count,len(sent)-1)
+
     def test_summer_winter_schedule(self):
         user={'timezone':'Europe/Berlin','schedule_time':'08:00','schedule_day':0}
         self.assertEqual(agent.due_slot(user,datetime(2026,7,6,6,17,tzinfo=timezone.utc)),'2026-07-06')

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone, date
 from urllib.parse import urlsplit, urlunsplit
 
 VERSION = 2
-TARGET_LISTINGS = 12
+TARGET_LISTINGS = 20
 MAX_LISTINGS = 30
 TTL_DAYS = 7
 DISCLAIMER = 'Estimates only; general information, not financial advice or a financing commitment. Verify independently before deciding.'
@@ -111,7 +111,7 @@ def validate_pool(data, sources, opened_urls):
         center={**center,'lat':None,'lon':None}
     listings=[]; seen=set(); rejected=0
     optional_unknown=0
-    for x in data.get('listings',[])[:MAX_LISTINGS]:
+    for x in data.get('listings',[]):
         try:
             u=url(x['url'])
             if u in seen: continue
@@ -295,6 +295,7 @@ def render(pool,s,rates,center,checked_at,cache_hit):
     m,f,blockers=screen(pool,s,rates,center)
     lines=[t('🏠 Apartment screening','🏠 Wohnungssuche')+' — '+s['location'],
            t('Data last researched: ','Daten zuletzt recherchiert: ')+checked_at[:10],
+           t(f'{len(pool["listings"])} researched apartments available; search coverage is limited.',f'{len(pool["listings"])} recherchierte Wohnungen verfügbar; Suche ist nicht vollständig.'),
            t('Gross rental yield is before costs, not profit.', 'Bruttomietrendite ist vor Kosten, kein Gewinn.'),
            t(f'{len(m)} candidates within known limits; {len(f)} nearby alternatives.',f'{len(m)} Angebote innerhalb bekannter Grenzen; {len(f)} ähnliche Alternativen.')]
     if not m:
@@ -346,11 +347,10 @@ def render(pool,s,rates,center,checked_at,cache_hit):
             if any(k=='max_loan_eur' for k,_ in item['changes']): out.append(t('Not financeable under your current loan cap.','Mit Ihrer aktuellen Kreditgrenze nicht finanzierbar.'))
         out.append(t('⚠️ Main risk: ','⚠️ Hauptrisiko: ')+(x['risk_de'] if de else x['risk_en'])[:220]);out.append(t('🔗 Listing: ','🔗 Anzeige: ')+x['url'])
         return '\n'.join(out)
-    # More verified candidates, never padding; up to 8 strict + 3 flexible.
-    shown=m[:8]; alternatives=f[:3] if len(m)<5 else []
+    # Send every retained match; Telegram transport handles message splitting.
+    shown=m; alternatives=f[:3] if len(m)<5 else []
     lines.extend(block(i) for i in shown)
     lines.extend(block(i,True) for i in alternatives)
-    if len(m)>8: lines.append(t(f'{len(m)-8} more matching properties in the saved pool.',f'{len(m)-8} weitere passende Wohnungen im gespeicherten Bestand.'))
     lines.append('\n'+t('💶 MORTGAGE RATES','💶 BAUZINSEN'))
     if rates['rates']:
         rs=rates['rates']; values=[x['rate_pct'] for x in rs]

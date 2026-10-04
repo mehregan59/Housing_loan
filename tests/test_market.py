@@ -112,6 +112,18 @@ class MarketTests(unittest.TestCase):
         combined,_=market.choose_pool([large,duplicate,expired,distant],{**S,'radius_km':150},NOW)
         self.assertEqual(len(combined['payload']['listings']),1)
 
+    def test_all_large_pool_matches_survive_validation_and_telegram_splitting(self):
+        items=[listing(url=SOURCE+str(i),title='Apartment '+str(i)) for i in range(40)]
+        allowed={GEO,TAX,*[x['url'] for x in items]}
+        validated=market.validate_pool(pool(items),allowed,{x['url'] for x in items})
+        self.assertEqual(len(validated['listings']),40)
+        text,urls=market.render(validated,S,R,(48,7.85),NOW.isoformat(),True)
+        self.assertEqual(set(urls),{x['url'] for x in items})
+        parts=list(agent.chunks(text))
+        self.assertGreaterEqual(len(parts),10)
+        self.assertEqual(''.join(parts),text)
+        self.assertTrue(all(len(x.encode('utf-16-le'))//2<=3900 for x in parts))
+
     def test_expired_cache_not_reused(self):
         r=row();r['expires_at']=(NOW-timedelta(seconds=1)).isoformat()
         self.assertIsNone(market.choose_pool([r],S,NOW)[0])
@@ -138,10 +150,10 @@ class MarketTests(unittest.TestCase):
                        rent_monthly=value(None),owner_cost_monthly=value(None),
                        energy_class='',year_built=None,lat=None,lon=None) for i in range(12)]
         text,urls=market.render(pool(items),S,R,(48,7.85),NOW.isoformat(),True)
-        self.assertEqual(len(urls),8)
+        self.assertEqual(len(urls),12)
         self.assertIn('12 candidates within known limits',text)
-        self.assertEqual(text.count('Provisional candidate'),8)
-        self.assertIn('4 more matching properties',text)
+        self.assertEqual(text.count('Provisional candidate'),12)
+        self.assertNotIn('more matching properties in the saved pool',text)
 
     def test_location_fallback_never_substitutes_another_town(self):
         matches,_,blocks=market.screen(pool([listing(town='Unknown town',lat=None,lon=None)]),S,R,(48,7.85))
@@ -193,8 +205,9 @@ class MarketTests(unittest.TestCase):
         items=[listing(url=SOURCE+str(i),title='Apartment '+str(i)) for i in range(10)]
         s={**S,'_seen':{items[0]['url']}}
         text,urls=market.render(pool(items),s,R,(48,7.85),NOW.isoformat(),True)
-        self.assertEqual(len(urls),8);self.assertNotIn(items[0]['url'],urls)
-        self.assertIn('2 more matching',text)
+        self.assertEqual(len(urls),10);self.assertIn(items[0]['url'],urls)
+        self.assertEqual(urls[-1],items[0]['url'])
+        self.assertNotIn('2 more matching',text)
         text,_=market.render(pool([items[0]]),s,R,(48,7.85),NOW.isoformat(),True)
         self.assertIn('Previously shown',text)
 
@@ -262,7 +275,7 @@ class MarketTests(unittest.TestCase):
     def test_same_settings_and_data_return_previous_report(self):
         import hashlib,json
         pr=market.choose_pool([row()],S,NOW)[0]
-        signature=hashlib.sha256(json.dumps({'renderer_version':6,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
+        signature=hashlib.sha256(json.dumps({'renderer_version':7,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
         db=Mock();db.request.side_effect=[[row('rates')],[pr],[{'report':'Previous report','usage':{'report_signature':signature}}]]
         meter={'pending':False,'cost':0,'calls':[]}
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
