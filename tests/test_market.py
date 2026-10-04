@@ -186,6 +186,14 @@ class MarketTests(unittest.TestCase):
             text,urls,hit=research.analyse(db,{'id':'job','settings':S,'user_id':123},meter)
         api.assert_not_called();self.assertEqual(text,'Previous report');self.assertEqual(urls,[])
 
+    def test_shared_report_shortcuts_both_research_calls(self):
+        db=Mock();db.rpc.return_value={'report':'Shared report','urls':[SOURCE]}
+        meter={'pending':False,'cost':0,'calls':[]}
+        with patch('openai.OpenAI') as api:
+            text,urls,hit=research.analyse(db,{'id':'job','settings':S,'user_id':123,'shared_reports_enabled':True},meter)
+        api.assert_not_called();db.request.assert_not_called();self.assertEqual(text,'Shared report')
+        self.assertTrue(meter['shared_hit']);self.assertEqual(meter['cost'],0)
+
     def test_tracking_url_deduplication(self):
         self.assertEqual(market.url(SOURCE+'?utm_source=test'),SOURCE)
 

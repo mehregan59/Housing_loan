@@ -166,3 +166,26 @@ await sendAs(123,'/settings');
 assert.match(messages.at(-1).text,/Administrator — no weekly report limit/);
 await sendAs(456,'/start');
 assert.equal(control.admin_user_id,123,'Applicant cannot change administrator quota identity');
+
+// /run and /saved serve exact-setting cached reports before quotas/dispatch.
+control={id:1,admin_user_id:123,research_v2:true,shared_reports_enabled:true};
+users.get(456).accepted_at='2026-10-04';
+let cachedReport='Shared property report';
+const oldFetch=globalThis.fetch;
+let queueCalls=0;
+globalThis.fetch=async(address,options={})=>{
+  if(address.includes('/rpc/bot_saved_report')) {
+    assert.equal(JSON.parse(options.body).p_user,456);
+    return Response.json(cachedReport?{report:cachedReport,urls:[]}:null);
+  }
+  if(address.includes('/rpc/bot_enqueue')) {queueCalls++;throw new Error('Cached retrieval must never enqueue');}
+  return oldFetch(address,options);
+};
+await sendAs(456,'/run');assert.equal(queueCalls,0);assert.equal(messages.at(-1).text,cachedReport);
+assert.match(messages.at(-2).text,/No quota used/);
+await sendAs(456,'saved',true);assert.equal(queueCalls,0);assert.equal(messages.at(-1).text,cachedReport);
+cachedReport='';
+await sendAs(456,'/saved');assert.match(messages.at(-1).text,/No current shared report/);assert.equal(queueCalls,0);
+control.research_v2=false;
+await sendAs(456,'/run');assert.match(messages.at(-1).text,/No paid run started/);assert.equal(queueCalls,0);
+console.log('Saved retrieval bypasses quotas and queues; inactive upgrade blocks paid runs');

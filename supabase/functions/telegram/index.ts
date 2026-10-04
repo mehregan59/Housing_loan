@@ -15,6 +15,7 @@ Example: /set max_price_eur 250000
 /run — new analysis (or use the button)
 /quota — weekly allowance
 /last — latest saved report
+/saved — existing report for your exact settings; no quota or AI cost
 /support YOUR QUESTION — contact the administrator
 /disclaimer — notice and data use
 Free: 1 report/week. Paid: up to 7. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. Manual membership during pilot. Delivery may be delayed; changing schedule does not add reports. If a report fails, use /support; repeated clicks cannot start parallel analyses.
@@ -132,7 +133,7 @@ async function reply(id: number, text: string, keyboard?: unknown) {
       ...(keyboard && i===0 ? {reply_markup:keyboard} : {})});
   }
 }
-const buttons = {inline_keyboard:[[{text:'⚙️ My settings',callback_data:'settings'},{text:'🔎 Run analysis',callback_data:'run'}],[{text:'Help',callback_data:'help'}]]};
+const buttons = {inline_keyboard:[[{text:'⚙️ My settings',callback_data:'settings'},{text:'🔎 Run analysis',callback_data:'run'}],[{text:'📂 Saved report (free)',callback_data:'saved'},{text:'Help',callback_data:'help'}]]};
 async function dispatch(job: string) {
   const repo = env('GITHUB_REPOSITORY');
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('Invalid repository');
@@ -405,13 +406,29 @@ Deno.serve(async req => {
       const local = new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Berlin',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
       const d=new Date(local+'T12:00:00Z'); d.setUTCDate(d.getUTCDate()-((d.getUTCDay()+6)%7));
       const week=d.toISOString().slice(0,10);
-      const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&week_start=eq.'+week+'&select=status,charged_usd');
-      const used=jobs.filter((j:any)=>j.status!=='failed'||Number(j.charged_usd)>0).length;
+      const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&week_start=eq.'+week+'&select=status,charged_usd,usage');
+      const used=jobs.filter((j:any)=>j.usage?.shared_hit!==true&&(j.status!=='failed'||Number(j.charged_usd)>0)).length;
       await reply(id,adminUnlimited?`Administrator: no weekly report limit.\nReports this week: ${used}.\nMonthly spending cap and one active analysis at a time still apply.`:`Plan: ${user.plan}\nUsed: ${used} / ${user.plan==='paid'?7:1} this week. Reset Monday 00:00 Europe/Berlin.`);
     } else if (cmd==='/last') {
       const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&status=eq.complete&order=finished_at.desc&limit=1&select=report');
       await reply(id,jobs.length?jobs[0].report:'No completed report yet.');
-    } else if (cmd==='/run') {
+    } else if (cmd==='/run'||cmd==='/saved') {
+      const control=(await db('GET','bot_control?id=eq.1'))[0];
+      if (control?.shared_reports_enabled) {
+        const saved=await db('POST','rpc/bot_saved_report',{p_user:id});
+        if (saved?.report) {
+          await reply(id,'📂 Saved report for your current settings. No quota used and no new AI research.');
+          await reply(id,saved.report); return new Response('ok');
+        }
+      }
+      if (cmd==='/saved') {
+        await reply(id,'No current shared report matches your exact settings. /last shows your previous report for free; /run can create a new personalised report within your allowance.');
+        return new Response('ok');
+      }
+      if (!control?.research_v2) {
+        await reply(id,'Analysis paused until the cost-saving upgrade is activated. No paid run started. Use /last for your saved report.');
+        return new Response('ok');
+      }
       const result=await db('POST','rpc/bot_enqueue',{p_user:id,p_key:'telegram:'+update.update_id});
       if (result.error) await reply(id,'Analysis not started: '+result.error+'. Use /support if you need help.');
       else if (result.duplicate) await reply(id,'This request is already recorded. Use /last for the latest report.');

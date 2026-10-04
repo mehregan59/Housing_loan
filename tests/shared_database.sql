@@ -1,0 +1,26 @@
+begin;
+insert into bot_users(user_id,approved,accepted_at) values(4001,true,now()),(4002,true,now()),(4003,false,now()),(4004,true,null);
+update bot_control set enabled=true,research_v2=true;
+do $$ declare s jsonb; a jsonb; j uuid; begin
+ select settings into s from bot_users where user_id=4001;
+ perform bot_shared_publish(s,'Public property report','["https://example.de/listing"]',now()+interval '1 day');
+ if bot_saved_report(4003) is not null or bot_saved_report(4004) is not null then raise exception 'Access/consent bypass'; end if;
+ if bot_saved_report(4002)->>'report'<>'Public property report' then raise exception 'Identical settings not shared'; end if;
+ if not exists(select 1 from bot_seen where user_id=4002) then raise exception 'Retrieved listing not recorded'; end if;
+ update bot_users set settings=settings||'{"_access":{"status":"approved"},"_edit":{"field":"equity_eur"}}' where user_id=4002;
+ if bot_saved_report(4002) is null then raise exception 'Internal metadata broke cache matching'; end if;
+ update bot_users set settings=jsonb_set(settings,'{equity_eur}','10000') where user_id=4002;
+ if bot_saved_report(4002) is not null then raise exception 'Different finances received wrong report'; end if;
+ a:=bot_enqueue(4001,'new-personal-report');j:=(a->>'job_id')::uuid;
+ perform bot_claim(j);perform bot_finish(j,'complete',0,'report','{}',null,'[]');
+ if bot_enqueue(4001,'quota-used')->>'error'<>'weekly_quota' then raise exception 'Personal report quota lost'; end if;
+ if bot_saved_report(4001) is null then raise exception 'Quota blocked free saved retrieval'; end if;
+ update bot_jobs set usage='{"shared_hit":true}' where id=j;
+ a:=bot_enqueue(4001,'race-shared-free');
+ if a->>'job_id' is null then raise exception 'Shared race result consumed quota'; end if;
+ update bot_shared_reports set expires_at=now()-interval '1 second';
+ if bot_saved_report(4001) is not null then raise exception 'Expired shared report served'; end if;
+ if has_table_privilege('anon','bot_shared_reports','SELECT') then raise exception 'Shared report table leaked'; end if;
+ if has_function_privilege('authenticated','bot_saved_report(bigint)','EXECUTE') then raise exception 'Saved RPC exposed'; end if;
+end $$;
+rollback;

@@ -32,6 +32,11 @@ def analyse(db,job,meter):
     if s.get('country','Germany')!='Germany': raise ValueError('Unsupported country')
     if MODEL not in ('gpt-6.1-sol','gpt-6-astra'): raise ValueError('Unpriced research model')
     now=datetime.now(timezone.utc)
+    if job.get('shared_reports_enabled'):
+        saved=db.rpc('bot_shared_get',{'p_settings':s})
+        if saved:
+            meter['shared_hit']=True
+            return saved['report'],saved['urls'],True
     # A single control lock reserves a fresh research budget; Actions serializes workers.
     reserved=False
     def extract(kind,prompt,schema,max_tools,max_output):
@@ -94,8 +99,20 @@ def analyse(db,job,meter):
     meter['report_signature']=signature
     previous_reports=db.request('GET',f'bot_jobs?user_id=eq.{job["user_id"]}&status=eq.complete&order=finished_at.desc&limit=1&select=report,usage')
     if previous_reports and (previous_reports[0].get('usage') or {}).get('report_signature')==signature and previous_reports[0].get('report'):
+        meter['shared_hit']=True
         return previous_reports[0]['report'],[],True
     seen={market.url(x['url']) for x in db.request('GET',f'bot_seen?user_id=eq.{job["user_id"]}&select=url&limit=1000')}
     settings=dict(s,_seen=seen)
     report,urls=market.render(row['payload'],settings,rates,center,row['created_at'],hit and not meter['calls'])
+    if job.get('shared_reports_enabled'):
+        # Shared version has no investor identity or previous-view history.
+        shared_report,shared_urls=market.render(row['payload'],s,rates,center,row['created_at'],True)
+        expiry=datetime.fromisoformat(row['expires_at'].replace('Z','+00:00'))
+        for rate in rates['rates']:
+            expiry=min(expiry,datetime.fromisoformat(rate['date']).replace(tzinfo=timezone.utc)+timedelta(days=15))
+        try:
+            db.rpc('bot_shared_publish',{'p_settings':s,'p_report':shared_report,'p_urls':shared_urls,'p_expires':expiry.isoformat()})
+        except Exception:
+            # An auxiliary cache failure must not discard an already paid, valid report.
+            meter['shared_publish_failed']=True
     return report,urls,hit

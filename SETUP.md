@@ -56,7 +56,7 @@ Stop spending immediately by setting `bot_control.enabled=false` and `BOT_ENABLE
 2. When ready to activate, run `update public.bot_control set research_v2=true where id=1;`. No new secret is required. The extractor defaults to `gpt-6.1-sol`. Activation itself makes no OpenAI call; the next requested/due uncached report may. Do not dispatch a test until its paid research is approved by the operator.
 3. Review one live report against the actual listing sources, including commission, owner fees/reserve split and nominal rates. Compare both fresh and cached costs before setting membership prices. A smaller model is not a guarantee of identical extraction quality.
 
-No webhook redeployment is required for v2. Existing buttons, approvals and quotas work. To switch back, set `research_v2=false`; existing public caches remain stored and legacy research may incur its old costs. The hourly Actions worker serializes all research in the `housing-analysis` concurrency group. Keep that single-worker rule; another hosting setup must implement equivalent database-backed research locking before parallel workers are enabled.
+No webhook redeployment is required for v2. Existing buttons, approvals and quotas work. To pause research, set `research_v2=false`; existing caches remain stored and the worker refuses to fall back to the expensive legacy pipeline. The hourly Actions worker serializes all research in the `housing-analysis` concurrency group. Keep that single-worker rule; another hosting setup must implement equivalent database-backed research locking before parallel workers are enabled.
 
 The seven-day expiry is refreshed on demand by `/run` or a due weekly report, not by independent area-wide paid jobs. Cached-data coverage is limited to collected apartments, not every apartment on the market. New listings wait until the next refresh; user settings changes recalculate cached data without an extra search. Health runs remove caches expired more than 30 days ago only when enabled.
 
@@ -67,3 +67,9 @@ Deploy the updated complete `supabase/functions/telegram/index.ts` through Supab
 ## Administrator unlimited weekly reports
 
 After 002, apply `supabase/migrations/003_admin_quota.sql` once in SQL Editor. Deploy the updated `supabase/functions/telegram/index.ts`. Send `/quota` in your private administrator bot chat; it binds the exemption to your existing `ADMIN_USER_ID` secret and shows no weekly report limit. No new secret or committed personal ID is required. The administrator still cannot bypass the monthly budget, one-active-job protection or unknown-usage pause. Before the SQL migration the updated webhook works normally, but the administrator still has the existing weekly quota.
+
+## Free shared reports and safe activation
+
+After 003, apply `supabase/migrations/004_shared_reports.sql` once. Deploy the latest complete webhook file. The migration enables saved-report retrieval and does not activate research or call OpenAI. `/saved` and `/run` serve fresh existing reports for identical settings without quota consumption. Sharing is exact for financial settings; nearby areas only reuse the underlying public listing research.
+
+Before activating v2, inspect `bot_control.research_v2` and the failed jobs' usage/model and error_code. Then activate with `update public.bot_control set research_v2=true where id=1;` as a separate operator-confirmed step. Existing queued/due jobs could run after activation, so check the queue before changing it. Do not repeat a paid failed job automatically. Old unvalidated/legacy reports are not retroactively inserted into the shared cache because their original investor settings and source provenance were not stored adequately.

@@ -155,11 +155,10 @@ def run_job(db, job_id):
             from research import analyse
             report, urls, cache_hit = analyse(db, job, meter)
             cost = round(meter['cost'],6)
-            usage = {'pipeline':2, 'cache_hit':cache_hit, 'research_calls':meter['calls'], 'report_signature':meter.get('report_signature')}
+            usage = {'pipeline':2, 'cache_hit':cache_hit, 'research_calls':meter['calls'], 'report_signature':meter.get('report_signature'), 'shared_hit':meter.get('shared_hit',False), 'shared_publish_failed':meter.get('shared_publish_failed',False)}
             status = 'complete'
         else:
-            report, urls, cost, usage = legacy_analysis(db, job)
-            status = 'complete'
+            raise ResearchUpgradeInactive()
     except Exception as exc:
         error = type(exc).__name__
         if job.get('research_v2'):
@@ -168,52 +167,13 @@ def run_job(db, job_id):
                 status = 'uncertain'
             else:
                 cost = round(meter['cost'],6)
-        elif isinstance(exc, AnalysisFailure):
-            cost, usage = exc.cost, exc.usage
-            status = 'uncertain' if cost is None else 'failed'
         else:
             cost = 0
     finish_job(db,job,job_id,status,cost,usage,report,urls,error)
 
 
-class AnalysisFailure(Exception):
-    def __init__(self,cost,usage):
-        self.cost,self.usage=cost,usage
-
-
-def legacy_analysis(db,job):
-    from openai import OpenAI
-    sent=False; cost=None; usage={}
-    try:
-        if MODEL not in ('gpt-6-astra', 'gpt-6.1-sol'):
-            raise ValueError('Unpriced model')
-        settings = {k:v for k,v in job['settings'].items() if not k.startswith('_')}
-        settings['already_seen_urls'] = [x['url'] for x in db.request('GET',
-            f"bot_seen?user_id=eq.{job['user_id']}&order=evaluated_at.desc&limit=200")]
-        if len(json.dumps(settings)) > 40000:
-            raise ValueError('Settings too large')
-        prompt = Path('prompt.txt').read_text().replace('{date}', datetime.now(timezone.utc).date().isoformat()).replace('{settings}', json.dumps(settings))
-        client = OpenAI(timeout=600, max_retries=0)
-        # No automatic retries: timeout/network failures may already have incurred charges.
-        sent = True
-        response = client.responses.create(model=MODEL, instructions=prompt,
-            input='Find and evaluate current apartments matching these settings.',
-            tools=[{'type':'web_search'}, {'type':'code_interpreter', 'container':{'type':'auto','memory_limit':'1g'}}],
-            max_tool_calls=MAX_TOOLS, max_output_tokens=MAX_OUTPUT,
-            include=['web_search_call.action.sources'], store=False)
-        data = response.model_dump()
-        cost, usage = estimate_cost(data)
-        if data.get('status') != 'completed':
-            raise ValueError('Incomplete model response')
-        report, urls = parse_report(response.output_text, sources_from(data))
-        if urls and not any(x.get('type') == 'code_interpreter_call' and x.get('status') == 'completed' for x in data.get('output', [])):
-            raise ValueError('Missing successful calculation tool')
-        return report, urls, cost, usage
-    except Exception as exc:
-        # Do not log exception messages: SDK/HTTP exceptions can include credentials or user data.
-        if not sent:
-            cost = 0
-        raise AnalysisFailure(cost,usage) from None
+class ResearchUpgradeInactive(Exception):
+    """Never silently fall back to the expensive legacy research path."""
 
 
 def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
@@ -231,12 +191,14 @@ def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
             db.admin('⚠️ Report saved, but delivery failed. Job '+job_id+'; use /last to retrieve it. No analysis retry.')
     else:
         try:
-            db.telegram(job['user_id'], '⚠️ Analysis failed. The administrator has been notified; no automatic paid retry.')
+            db.telegram(job['user_id'], 'Analysis paused until the cost-saving upgrade is activated. No API call was made. Use /last for your saved report.' if error=='ResearchUpgradeInactive' else '⚠️ Analysis failed. The administrator has been notified; no automatic paid retry.')
         except Exception:
             pass
     ledger = db.request('GET', 'bot_jobs?created_at=gte.'+datetime.now(timezone.utc).strftime('%Y-%m-01T00:00:00Z')+'&select=charged_usd,reserved_usd')
     total = sum(float(x['charged_usd'] if x['charged_usd'] is not None else x['reserved_usd']) for x in ledger)
-    db.admin(f"💳 Administrator only — API spending\nAnalysis status: {status}\nEstimated cost of this report: "+
+    models=', '.join(sorted({x.get('model','unknown') for x in usage.get('research_calls',[])})) or usage.get('model','none (no API call)')
+    db.admin(f"💳 Administrator only — API spending\nAnalysis status: {status}\nModel: {models}\n"+
+        (f"Failure code: {error}\n" if error else '')+"Estimated cost of this report: "+
         (f"${cost:.4f}" if cost is not None else 'unknown; reservation retained and analyses paused for review')+
         f"\nThis month, including pending reports: ${total:.2f} / $8 budget\n"+
         f"Ordinary users do not receive this message.\nEstimate only; check OpenAI billing. Hosting, tax and currency conversion are separate.\nReference: {job_id}")
@@ -279,6 +241,8 @@ def main():
             control = db.request('GET','bot_control?id=eq.1')[0]
             if control.get('research_v2'):
                 db.request('DELETE','bot_market_cache?expires_at=lt.'+(datetime.now(timezone.utc)-timedelta(days=30)).isoformat())
+            if control.get('shared_reports_enabled'):
+                db.request('DELETE','bot_shared_reports?expires_at=lt.'+datetime.now(timezone.utc).isoformat())
         elif args.mode == 'job':
             import uuid
             run_job(db, str(uuid.UUID(args.job_id)))

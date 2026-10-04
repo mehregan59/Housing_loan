@@ -13,7 +13,7 @@ Invite-only Telegram pilot for screening German buy-to-let apartments. Users cho
 | OpenAI Responses API | Shared, structured web research; no calculation/report-writing call in v2 |
 | Telegram | Buttons, commands, reports and support |
 
-No always-running laptop is required. The legacy worker uses `gpt-6-astra`. The v2 extractor defaults to `gpt-6.1-sol` (`RESEARCH_MODEL`), supporting web search and structured outputs. Python performs calculations and writes reports. There is no automatic paid fallback to a more expensive model. Model/pricing configuration must be reviewed before changing it. The pilot has a separate $8 OpenAI project hard cap and a database budget of $8, chosen as a conservative allowance under the operator's €10 goal. Currency conversion, taxes and hosting are separate. $1/job is a **budget reservation, not a guaranteed maximum bill**: search-input token costs cannot be known precisely before the response completes. The OpenAI hard limit is the billing backstop and can slightly overshoot during propagation.
+No always-running laptop is required. The old pilot used `gpt-6-astra`. The worker now blocks paid research if v2 is inactive, rather than falling back. The v2 extractor defaults to `gpt-6.1-sol` (`RESEARCH_MODEL`), supporting web search and structured outputs. Python performs calculations and writes reports. There is no automatic paid fallback to a more expensive model. Model/pricing configuration must be reviewed before changing it. The pilot has a separate $8 OpenAI project hard cap and a database budget of $8, chosen as a conservative allowance under the operator's €10 goal. Currency conversion, taxes and hosting are separate. $1/job is a **budget reservation, not a guaranteed maximum bill**: search-input token costs cannot be known precisely before the response completes. The OpenAI hard limit is the billing backstop and can slightly overshoot during propagation.
 
 ## User commands
 
@@ -52,7 +52,7 @@ Public-facing notice: estimates only; general information, not financial advice 
 
 Quota and budget reservations are atomic in PostgreSQL. Only one active job per user is permitted. Worker claims are atomic and check approval, acceptance, activation and global spending again. Click/webhook duplicates reuse one request record. Output tokens, built-in tool calls, timeout and automatic SDK retries are bounded; retries are disabled. V2 makes at most two research calls on an empty cache (four rate-tool calls and 24 listing-tool calls; output limits 1,500/14,000 tokens). It sends no investor finances or seen-URL histories to OpenAI. A complete cache hit costs $0 in OpenAI API usage; hosting remains separate. Costs include token usage, conservatively counted tool actions, legacy container sessions if applicable, and a 10% estimate buffer. Fresh-research cost is not guaranteed in advance. They are not official invoices.
 
-V2 queues cached work with zero reservation and acquires a locked $1 research reservation before paid calls. Exhausted monthly search budgets block fresh research, while fresh cached reports can still run. The existing approval and weekly report quotas remain enforced for cached work. Unknown usage or an interrupted running job pauses new analyses pending admin reconciliation. Failed jobs with known positive usage still count toward quota. Report delivery failure keeps the completed report for `/last`, without rerunning the paid analysis. Failed dispatch leaves a queued job for the next scheduled sweep.
+V2 queues cached work with zero reservation and acquires a locked $1 research reservation before paid calls. Exhausted monthly search budgets block fresh research, while fresh cached reports can still run. Approval remains required. Newly calculated personalised reports count toward weekly quotas even if their research data is cached; retrieving an existing exact-setting report does not. Unknown usage or an interrupted running job pauses new analyses pending admin reconciliation. Failed jobs with known positive usage still count toward quota. Report delivery failure keeps the completed report for `/last`, without rerunning the paid analysis. Failed dispatch leaves a queued job for the next scheduled sweep.
 
 Admin reconciliation: inspect OpenAI billing for the job time; record verified `charged_usd` and change an `uncertain` job to `failed` in Supabase. Never erase an uncertain reservation or retry blindly. Costs can be incurred even when no report is delivered.
 
@@ -75,7 +75,7 @@ Share the bot link. Unapproved users tap **Request access**; the button explains
 
 Pending requests cannot notify twice. Declined requests have a 24-hour cooldown measured from the request time. Each decision is bound to a request nonce and uses a conditional database update; stale buttons cannot reverse a completed decision or decide a replacement request. A saved decision is retained if the applicant's notification fails. Request state lives in internal settings metadata, excluded from OpenAI inputs and settings summaries. No new database migration or paid API call is required.
 
-Only an administrator can send `/plan ID paid` to allow seven reports/week, or `/plan ID free` to return to one. Changing settings and `/last` cost no OpenAI tokens. Cached reports still count toward the weekly report allowance.
+Only an administrator can send `/plan ID paid` to allow seven reports/week, or `/plan ID free` to return to one. Changing settings and `/last` cost no OpenAI tokens. New personalised reports count toward the weekly allowance; retrieving an existing exact-setting report does not.
 
 ## Shared-research upgrade
 
@@ -84,3 +84,11 @@ See the staged upgrade steps at the end of [SETUP.md](SETUP.md). Migration 002 p
 ## Administrator weekly quota exemption
 
 Apply `supabase/migrations/003_admin_quota.sql` once after 002, and deploy the latest webhook file. The next private administrator interaction binds `bot_control.admin_user_id` from the existing `ADMIN_USER_ID` secret; no identifier is committed. `/settings` and `/quota` then show unlimited weekly administrator reports. Ordinary accounts cannot configure this identity or gain an exemption through plan/settings commands. Cached or fresh administrator requests still obey the monthly budget and serial-run protection.
+
+## Free shared-report retrieval
+
+Migration 004 adds a service-only shared report cache keyed by the exact investor settings, excluding internal metadata. Shared report text contains property screening results without Telegram identities or previous-view history. `/saved` and `/run` return a fresh exact-setting report before quota checking or dispatch, with no new AI call or quota use. Similar settings share listing research but must be calculated separately; a different loan/equity limit never receives another user's numbers. `/last` remains an unlimited personal report retrieval.
+
+If two users queue identical new requests before the first report exists, the serialized worker publishes the first report and reuses it for the second. The reused job has `usage.shared_hit=true` and is excluded from the weekly quota count. Reports expire with the listing pool and no later than their mortgage sources' permitted age. No unsolicited cross-user messages are sent; automatic delivery still respects weekly opt-in.
+
+The expensive legacy API path is removed. Inactive v2 now produces a zero-cost paused response. Administrator spending messages show the model and a safe failure code. A paid extraction can still fail validation after incurring costs; the ledger keeps those charges and no automatic paid retry occurs. Auxiliary shared-report publishing failures do not discard a valid personal report.

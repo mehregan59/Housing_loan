@@ -45,7 +45,7 @@ class Tests(unittest.TestCase):
     def test_unknown_usage_never_zero(self):
         with self.assertRaises(ValueError): agent.estimate_cost({})
 
-    def test_uncertain_api_failure_retains_reservation(self):
+    def test_inactive_upgrade_never_calls_legacy_api(self):
         db=Mock()
         db.rpc.side_effect=[{'settings':{},'user_id':123,'reserved_usd':1},None]
         db.request.side_effect=[[],[{'charged_usd':None,'reserved_usd':1}]]
@@ -54,9 +54,9 @@ class Tests(unittest.TestCase):
         with patch('openai.OpenAI',return_value=client), patch.dict('os.environ',{'ADMIN_USER_ID':'123'}):
             agent.run_job(db,'test-job')
         settlement=db.rpc.call_args_list[1].args[1]
-        self.assertEqual(settlement['p_status'],'uncertain')
-        self.assertIsNone(settlement['p_cost'])
-        self.assertEqual(client.responses.create.call_count,1)
+        self.assertEqual(settlement['p_status'],'failed')
+        self.assertEqual(settlement['p_cost'],0)
+        self.assertEqual(client.responses.create.call_count,0)
 
     def test_already_claimed_job_never_calls_api(self):
         db=Mock(); db.rpc.return_value=None
