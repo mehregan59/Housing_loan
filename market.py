@@ -184,7 +184,10 @@ def choose_pool(rows,s,now):
              and distance(point(r['payload']['center']),center)<=5]
     related.sort(key=lambda r:r['created_at'],reverse=True)
     listings=[]; places=[]; urls=set(); place_keys=set(); contributors=[]
+    pending={};attempted=set()
     for r in related:
+        for lead in r['payload'].get('pending_leads',[]): pending.setdefault(lead['url'],lead)
+        attempted.update(r['payload'].get('attempted_lead_urls',[]))
         contributed=False
         for x in r['payload']['listings']:
             if x['url'] in urls: continue
@@ -195,6 +198,8 @@ def choose_pool(rows,s,now):
         if contributed: contributors.append(r)
     if not contributors: return anchor,center
     combined=dict(anchor,payload={**anchor['payload'],'listings':listings,'places':places,
+        'pending_leads':[lead for u,lead in pending.items() if u not in urls and u not in attempted],
+        'attempted_lead_urls':sorted(attempted),
         'research_partial':any(r['payload'].get('research_partial',False) for r in contributors)},
         created_at=min(r['created_at'] for r in contributors),
         expires_at=min(r['expires_at'] for r in contributors))
@@ -299,6 +304,7 @@ def render(pool,s,rates,center,checked_at,cache_hit):
            t('Data last researched: ','Daten zuletzt recherchiert: ')+checked_at[:10],
            t(f'{len(pool["listings"])} researched apartments available; search coverage is limited.',f'{len(pool["listings"])} recherchierte Wohnungen verfügbar; Suche ist nicht vollständig.'),
            *([t(f'Collection stages completed: {pool["discovery_batches"]["completed"]}/{pool["discovery_batches"]["planned"]}. This is not an exhaustive market search.',f'Sammelphasen abgeschlossen: {pool["discovery_batches"]["completed"]}/{pool["discovery_batches"]["planned"]}. Keine vollständige Marktsuche.')] if pool.get('discovery_batches') else []),
+           *([t(f'{len(pool["pending_leads"])} discovered links await individual-page verification; they are not included as matches.',f'{len(pool["pending_leads"])} gefundene Links warten auf Einzelprüfung; noch keine passenden Angebote.')] if pool.get('pending_leads') else []),
            t('Gross rental yield is before costs, not profit.', 'Bruttomietrendite ist vor Kosten, kein Gewinn.'),
            t(f'{len(m)} candidates within known limits; {len(f)} nearby alternatives.',f'{len(m)} Angebote innerhalb bekannter Grenzen; {len(f)} ähnliche Alternativen.')]
     if not m:

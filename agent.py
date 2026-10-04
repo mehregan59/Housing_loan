@@ -204,7 +204,7 @@ def run_job(db, job_id):
             report, urls, cache_hit = analyse(db, job, meter)
             cost = round(meter['cost'],6)
             usage = {'pipeline':2, 'cache_hit':cache_hit, 'research_calls':meter['calls'], 'report_signature':meter.get('report_signature'), 'shared_hit':meter.get('shared_hit',False), 'shared_publish_failed':meter.get('shared_publish_failed',False)}
-            usage.update(partial=meter.get('partial',False),warnings=meter.get('warnings',[]),checkpoints=meter.get('checkpoints',[]),stage=meter.get('stage'))
+            usage.update(collection_stats=meter.get('collection_stats',{}),partial=meter.get('partial',False),warnings=meter.get('warnings',[]),checkpoints=meter.get('checkpoints',[]),stage=meter.get('stage'))
             status = 'complete'
         else:
             raise ResearchUpgradeInactive()

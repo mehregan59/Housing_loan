@@ -101,36 +101,39 @@ def expand_discovery(data):
     return {**data,'listings':listings}
 
 
-PORTAL_GROUPS = (
-    ['immobilienscout24.de','immowelt.de'],
-    ['kleinanzeigen.de','ohne-makler.net'],
-    ['local estate agents','immobilienscout24.de','immowelt.de'],
-)
+LEAD_SCHEMA=market.obj({'leads':market.arr(market.obj({'url':market.S,'town':market.S,'title':market.S}))})
 
 
-def listing_batch_prompt(settings,radius,now,batch,known_urls,pool=None):
-    """Different explicit portal/town tasks, without private financial settings."""
-    center=market.point(pool['center']) if pool else None
-    towns=[]
-    for place in (pool or {}).get('places',[]):
-        point=market.point(place)
-        if center and point and market.distance(center,point)<=radius and market.location_norm(place['name'])!=market.location_norm(settings['location']):
-            if place['name'] not in towns: towns.append(place['name'])
-    task={
-        'today':str(now.date()),'location':settings['location'],'country':'Germany',
-        'search_radius_km':radius,'batch':batch+1,'priority_sites':PORTAL_GROUPS[batch],
-        'priority_towns':towns[batch-1::2][:6] if batch else [],
-        'already_collected_urls':known_urls,'target_distinct_listings':8,
-        'required_searches':[
-            f'site:{site} Eigentumswohnung kaufen {town}'
-            for town in ((towns[batch-1::2][:3] if batch else []) or [settings['location']])
-            for site in PORTAL_GROUPS[batch] if '.' in site
-        ],
-    }
-    prompt=json.dumps(task,ensure_ascii=False)
-    prompt+='\nSearch the specified portals separately and several municipalities within the radius. For batch 1 also identify and source at least six nearby municipality points across the radius where available; later batches prioritise other towns and local agents. Do not only search the city centre. Include different price bands, prioritising affordable apartments. Collect NEW distinct apartments independently of investor financial limits. Search result category pages are discovery only: open individual listing pages to verify price and size. Do not reopen already_collected_urls. If a portal blocks access, switch to another portal or accessible local agents. Aim for 8 verified apartments in this small batch; never pad. Finish valid JSON before the output limit. Optional missing fields do not disqualify an apartment; use null. Use only fields in the compact schema. Keep risk strings under 80 characters and estimate basis under 100 characters. Do not research area purchase-price benchmarks. Collect sourced municipality coordinates once in places, not per apartment; reuse points for the same municipality. Tax requires an official source. Estimates require relevant cited evidence; otherwise unknown. No calculations or narrative report.'
-    if pool:
-        prompt+='\nPreviously verified public municipality points (reuse with their source URLs): '+json.dumps(pool.get('places',[])[:30],ensure_ascii=False)
+def validate_leads(data,sources,excluded=()):
+    allowed=market.source_set(sources);seen=market.source_set(excluded);leads=[]
+    for lead in data.get('leads',[]):
+        try:
+            u=market.url(lead['url'])
+            if u not in allowed or u in seen: continue
+            # Category pages are search aids, never apartment leads.
+            from urllib.parse import urlsplit
+            path=urlsplit(u).path.lower()
+            if not path.strip('/') or path.startswith(('/suche','/s-such','/s-wohnung','/immobilienpreise')): continue
+            seen.add(u);leads.append({'url':u,'town':str(lead.get('town',''))[:100],'title':str(lead.get('title',''))[:120]})
+        except (ValueError,KeyError,TypeError,AttributeError): continue
+    return leads
+
+
+def merge_leads(*groups,excluded=()):
+    seen=market.source_set(excluded);result=[]
+    for group in groups:
+        for lead in group:
+            try: u=market.url(lead['url'])
+            except (ValueError,KeyError,TypeError): continue
+            if u not in seen: result.append({**lead,'url':u});seen.add(u)
+    return result
+
+
+def detail_prompt(settings,radius,now,leads,verified_pool):
+    prompt=json.dumps({'today':str(now.date()),'location':settings['location'],'search_radius_km':radius,
+                       'individual_listing_urls':leads},ensure_ascii=False)
+    prompt+='\nOpen only these individual apartment URLs and extract their price, size and available fields into the compact schema. Do NOT search for replacement apartments, mortgage rates or price benchmarks. If blocked/removed/unsupported, omit that apartment. Verify German town/state from the listing. Missing optional values stay unknown. Store municipality coordinates once in places when independently sourced. If no verified points are provided, prioritise sourcing the requested search centre and reuse it for apartments in that municipality. No calculations. Keep bilingual risks under 80 characters and estimate basis under 100 characters. Finish valid JSON; these are at most five apartments.'
+    if verified_pool: prompt+='\nPreviously source-verified municipality points: '+json.dumps([verified_pool['center']]+verified_pool.get('places',[])[:30],ensure_ascii=False)
     return prompt
 
 
@@ -167,7 +170,7 @@ def analyse(db,job,meter):
             reserved=True
         meter['stage']=kind
         meter['pending']=True
-        response=OpenAI(timeout=480,max_retries=0).responses.create(
+        response=OpenAI(timeout=300,max_retries=0).responses.create(
             model=MODEL,instructions=Path('research_prompt.txt').read_text(),input=prompt,
             tools=[{'type':'web_search','search_context_size':'low'}],
             text={'format':{'type':'json_schema','name':kind,'strict':True,'schema':schema}},
@@ -199,6 +202,8 @@ def analyse(db,job,meter):
         if truncated: meter.setdefault('warnings',[]).append(kind.title()+'OutputLimitPartial')
         if kind=='rates':
             return market.validate_rates(extracted,sources,now)
+        if kind=='links':
+            return validate_leads(extracted,sources)
         validated=market.validate_pool(expand_discovery(extracted),sources,opened)
         # These points were source-validated when the fresh public cache was
         # created. Reuse exact saved points, never model-asserted new coordinates.
@@ -252,40 +257,72 @@ def analyse(db,job,meter):
             report,urls=partial_report(previous[0]['payload'],s,previous[0]['created_at'])
             return report,urls,True
         old_urls=[x['url'] for x in supplement['payload']['listings']] if supplement else [x['url'] for x in previous[0]['payload']['listings'][:20]] if previous else []
+        inherited=(supplement or {}).get('payload') or (previous[0]['payload'] if previous and market.fresh(previous[0],now) else None)
+        pending=list((inherited or {}).get('pending_leads',[]))
+        attempted_urls=list((inherited or {}).get('attempted_lead_urls',[]))
+        known=old_urls+attempted_urls
+        # A fresh queue is shared public data. Drain saved leads before paying to
+        # discover the same URLs again. Discovery extracts only links, not pages.
+        if not pending:
+            task=json.dumps({'today':str(now.date()),'location':s['location'],'radius_km':radius,
+                 'sites':['immobilienscout24.de','immowelt.de','kleinanzeigen.de','ohne-makler.net','local agents'],
+                 'exclude_urls':known+[x['url'] for x in pending],
+                 'nearby_towns':[p['name'] for p in (inherited or {}).get('places',[])],
+                 'target_new_links':60},ensure_ascii=False)
+            task+='\nDISCOVERY ONLY: Search portal result pages and multiple nearby municipalities across the radius. Collect up to 60 distinct individual apartment-for-sale URLs visible in retrieved search sources. Do not open individual apartment pages or extract full details yet. No mortgage/benchmark/coordinate research. Exclude already collected URLs. Skip category pages, houses, rentals and auctions identifiable in search results. Titles and towns are hints, not verified facts. Keep strings short. Finish valid JSON; never invent URLs.'
+            try:
+                leads=extract('links',task,LEAD_SCHEMA,4,3000)
+            except ResearchDataError as exc:
+                if not inherited or meter['pending']: raise
+                meter.setdefault('warnings',[]).append('Discovery'+exc.code)
+                leads=[]
+            if leads is not None: pending=merge_leads(pending,leads,excluded=known)
         pool=None
-        completed_batches=0
-        attempted_batches=0
-        for batch in range(3):
-            # Spend at most the previous 24 listing tool calls, in three smaller
-            # contexts. Stop optional expansion before costs grow; reservations
-            # remain the authoritative monthly gate. This is not a hard API price cap.
-            if batch and meter['cost']>=0.80:
+        completed_batches=attempted_batches=0
+        for batch in range(4):
+            if not pending: break
+            if meter['cost']>=0.80:
                 meter.setdefault('warnings',[]).append('ExpansionStoppedAtCostGuard')
                 break
-            known=old_urls+[x['url'] for x in (pool or {}).get('listings',[])]
-            verified_pool=pool or (supplement or {}).get('payload')
-            prompt=listing_batch_prompt(s,radius,now,batch,known,verified_pool)
+            selected=pending[:5]
+            verified_pool=pool or inherited
+            prompt=detail_prompt(s,radius,now,selected,verified_pool)
             try:
                 attempted_batches+=1
-                extra=extract('pool',prompt,DISCOVERY_SCHEMA,8,5000,verified_pool)
+                extra=extract('pool',prompt,DISCOVERY_SCHEMA,5 if verified_pool else 6,4000,verified_pool)
             except ResearchDataError as exc:
                 if pool is None or meter['pending']: raise
-                meter.setdefault('warnings',[]).append('Expansion'+exc.code)
+                meter.setdefault('warnings',[]).append('Extraction'+exc.code)
                 pool['research_partial']=True
                 break
             if extra is None: break
+            # Never admit a model-suggested replacement outside this queue batch.
+            selected_urls=market.source_set(x['url'] for x in selected)
+            extra['listings']=[x for x in extra['listings'] if market.url(x['url']) in selected_urls]
+            accepted=market.source_set(x['url'] for x in extra['listings'])
+            truncated=meter['calls'][-1]['completion_status']=='incomplete'
+            processed=accepted if truncated else selected_urls
+            pending=[x for x in pending if market.url(x['url']) not in processed]
+            attempted_urls=list(market.source_set(attempted_urls)|processed)
             if not extra.get('research_partial'): completed_batches+=1
             pool=extra if pool is None else merge_listing_batches(pool,extra)
-            # No arbitrary result cap: every verified item in all batches survives.
-            # An output-truncated batch retains complete items and does NOT
-            # cancel the other discovery batches. Each uses a fresh context.
+            # Complete items survive truncation. Remaining URLs stay queued,
+            # instead of vanishing or being falsely called evaluated listings.
+        if pool is None and inherited:
+            pool=dict(inherited)
+        if pool is None and pending:
+            pool={'center':{'name':s['location'],'lat':None,'lon':None,'source_url':''},
+                  'places':[],'listings':[],'research_partial':True}
         if pool is None:
             message='Suchbudget nicht verfügbar. Kein aktueller gemeinsamer Bestand deckt Ihren Standort ab. Ihre Grenzen wurden nicht geändert. Mit /last können Sie einen gespeicherten Bericht abrufen.' if s.get('language')=='de' else 'Search budget unavailable. No fresh shared listing pool covers your location. Your limits have not been changed. Try /last for a saved report.'
             return (message+'\n\n'+market.DISCLAIMER,[],False)
         if supplement:
             pool={**merge_listing_batches(supplement['payload'],pool),'retained_expires_at':supplement['expires_at'],'oldest_researched_at':supplement['created_at']}
             if market.point(pool['center']) is None: pool['center']=supplement['payload']['center']
-        pool['discovery_batches']={'planned':3,'attempted':attempted_batches,'completed':completed_batches}
+        pool['discovery_batches']={'planned':4,'attempted':attempted_batches,'completed':completed_batches}
+        pool['pending_leads']=merge_leads(pending,excluded=[x['url'] for x in pool['listings']])
+        pool['attempted_lead_urls']=attempted_urls
+        pool['collection_stats']={'queued':len(pool['pending_leads']),'verified':len(pool['listings'])}
         row=save(key,'pool',pool,radius);center=market.point(pool['center'])
         if center is None:
             meter['partial']=True
@@ -294,6 +331,7 @@ def analyse(db,job,meter):
     # Re-sort previously seen homes after new homes; keep them rather than inventing replacements.
     signature=hashlib.sha256(json.dumps({'renderer_version':9,'settings':s,'pool':row['payload'],'checked':row['created_at'],'rates':rates},sort_keys=True).encode()).hexdigest()
     meter['report_signature']=signature
+    meter['collection_stats']=row['payload'].get('collection_stats',{})
     previous_reports=db.request('GET',f'bot_jobs?user_id=eq.{job["user_id"]}&status=eq.complete&order=finished_at.desc&limit=1&select=report,usage')
     if previous_reports and (previous_reports[0].get('usage') or {}).get('report_signature')==signature and previous_reports[0].get('report'):
         meter['shared_hit']=True

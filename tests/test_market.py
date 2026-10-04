@@ -26,6 +26,45 @@ def pool(items=None):
 def row(kind='pool'):
     return {'cache_key':'key','kind':kind,'version':2,'payload':pool() if kind=='pool' else R,'radius_km':105,'created_at':NOW.isoformat(),'expires_at':(NOW+timedelta(days=7)).isoformat()}
 
+def fake_collection_api(urls,truncated=False,no_center=False,expensive=False):
+    import json
+    client=Mock()
+    def create(**kw):
+        stage=kw['text']['format']['name'];response=Mock()
+        if stage=='rates':
+            extracted=R;output=[{'type':'web_search_call','action':{'type':'search','sources':[{'url':x['source_url']} for x in R['rates']]}}]
+        elif stage=='links':
+            extracted={'leads':[{'url':u,'town':'Freiburg','title':'Apartment'} for u in urls]}
+            output=[{'type':'web_search_call','action':{'type':'search','sources':[{'url':u} for u in urls]}}]
+        else:
+            selected=json.loads(kw['input'].split('\n')[0])['individual_listing_urls']
+            picked=selected[:1] if truncated else selected
+            extracted=pool([listing(url=x['url'],rent_monthly=value(None),owner_cost_monthly=value(None)) for x in picked])
+            if no_center: extracted['center']={'name':'Freiburg','lat':None,'lon':None,'source_url':''};extracted['places']=[]
+            output=[{'type':'web_search_call','action':{'type':'open_page','url':x['url'],'sources':[{'url':GEO},{'url':TAX}]}} for x in picked]
+        text=json.dumps(extracted)
+        partial=truncated and stage=='pool'
+        if partial: text=text[:-1]+',"unfinished":'
+        response.output_text=text
+        response.model_dump.return_value={'status':'incomplete' if partial else 'completed',
+            'incomplete_details':{'reason':'max_output_tokens'} if partial else None,
+            'usage':{'input_tokens':400000 if expensive else 2000,'output_tokens':500},'output':output}
+        return response
+    client.responses.create.side_effect=create
+    return client
+
+
+def collection_database(old=None):
+    db=Mock();db.rpc.return_value=True
+    def request(method,path,data=None):
+        if method!='GET': return None
+        if path.startswith('bot_market_cache?cache_key=eq.rates'):return [row('rates')]
+        if path.startswith('bot_market_cache?kind=eq.pool') and old:return [old]
+        return []
+    db.request.side_effect=request
+    return db
+
+
 class MarketTests(unittest.TestCase):
     def test_reference_arithmetic_and_stress(self):
         c=market.calculate(listing(),S,R)
@@ -134,26 +173,14 @@ class MarketTests(unittest.TestCase):
         self.assertEqual(urls,[SOURCE])
 
     def test_admin_refresh_bypasses_reports_and_appends_new_listing(self):
-        import json
-        old=row();new=pool([listing(url=SOURCE+'new')])
-        db=Mock()
-        def database(method,path,data=None):
-            if method!='GET': return None
-            if path.startswith('bot_market_cache?cache_key=eq.rates'): return [row('rates')]
-            if path.startswith('bot_market_cache?kind=eq.pool'): return [old]
-            if path.startswith('bot_market_cache?cache_key=eq.pool'): return [old]
-            return []
-        db.request.side_effect=database;db.rpc.return_value=True
-        response=Mock();response.output_text=json.dumps(new)
-        response.model_dump.return_value={'status':'completed','usage':{'input_tokens':1000,'output_tokens':400},'output':[{'type':'web_search_call','action':{'type':'open_page','url':SOURCE+'new','sources':[{'url':GEO},{'url':TAX}]}}]}
+        old=row();db=collection_database(old);client=fake_collection_api([SOURCE+'new'])
         meter={'pending':False,'cost':0,'calls':[]}
-        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
-            dt.now.return_value=NOW;api.return_value.responses.create.return_value=response
-            text,urls,hit=research.analyse(db,{'id':'job','user_id':123,'settings':S,'force_refresh':True,'shared_reports_enabled':True},meter)
+        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI',return_value=client):
+            dt.now.return_value=NOW
+            report,urls,hit=research.analyse(db,{'id':'job','settings':S,'user_id':123,'force_refresh':True,'shared_reports_enabled':True},meter)
         self.assertEqual(set(urls),{SOURCE,SOURCE+'new'})
-        self.assertEqual(api.return_value.responses.create.call_count,3)
+        self.assertEqual(client.responses.create.call_count,2)
         self.assertNotIn('bot_shared_get',[c.args[0] for c in db.rpc.call_args_list])
-        self.assertIn('already_collected_urls',api.return_value.responses.create.call_args.kwargs['input'])
         saved=[c.args[2] for c in db.request.call_args_list if c.args[0]=='POST' and c.args[1]=='bot_market_cache'][0]
         self.assertEqual(saved['expires_at'],old['expires_at'])
 
@@ -295,37 +322,24 @@ class MarketTests(unittest.TestCase):
         db.report.assert_called_once_with(456,'Saved report','job','en');self.assertIn('Administrator only',db.admin.call_args.args[0])
 
     def test_fresh_research_uses_schema_no_calculation_tool_and_saves_public_data(self):
-        db=Mock()
-        # Rates miss, pool miss, old URLs miss, rate save, pool save, prior report, seen.
-        db.request.side_effect=lambda method,path,data=None: [] if method=='GET' else None
-        db.rpc.return_value=True
-        response=Mock()
         import json
-        responses=[{'status':'completed','usage':{'input_tokens':1000,'output_tokens':200},'output':[{'type':'web_search_call','action':{'type':'search','sources':[{'url':x['source_url']} for x in R['rates']]}}]}]
-        texts=[json.dumps(R)]
-        for batch in range(3):
-            batch_url=SOURCE+str(batch)
-            responses.append({'status':'completed','usage':{'input_tokens':2000,'output_tokens':600},'output':[{'type':'web_search_call','action':{'type':'open_page','url':batch_url,'sources':[{'url':GEO},{'url':TAX}]}}]})
-            texts.append(json.dumps(pool([listing(url=batch_url)])))
-        response.model_dump.side_effect=responses
-        type(response).output_text=__import__('unittest').mock.PropertyMock(side_effect=texts)
-        client=Mock();client.responses.create.return_value=response
-        meter={'pending':False,'cost':0,'calls':[]}
+        urls=[SOURCE+str(i) for i in range(30)]
+        db=collection_database();client=fake_collection_api(urls);meter={'pending':False,'cost':0,'calls':[]}
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI',return_value=client):
             dt.now.return_value=NOW
-            text,urls,hit=research.analyse(db,{'id':'job','settings':S,'user_id':123},meter)
-        self.assertEqual(client.responses.create.call_count,4);self.assertFalse(hit)
-        self.assertEqual(set(urls),{SOURCE+str(i) for i in range(3)});self.assertGreater(meter['cost'],0);self.assertFalse(meter['pending'])
-        calls=client.responses.create.call_args_list[1:]
-        self.assertEqual(sum(c.kwargs['max_tool_calls'] for c in calls),24)
-        self.assertEqual([json.loads(c.kwargs['input'].split('\n')[0])['priority_sites'] for c in calls],list(research.PORTAL_GROUPS))
-        self.assertIn(SOURCE+'0',json.loads(calls[1].kwargs['input'].split('\n')[0])['already_collected_urls'])
-        for call in client.responses.create.call_args_list:
-            self.assertEqual(call.kwargs['tools'],[{'type':'web_search','search_context_size':'low'}])
-            self.assertNotIn('max_loan_eur',call.kwargs['input'])
-        saved=[call.args[2] for call in db.request.call_args_list if call.args[0]=='POST']
-        self.assertEqual(len(saved),2)
-        self.assertNotIn('user_id',__import__('json').dumps(saved));self.assertNotIn('equity_eur',__import__('json').dumps(saved))
+            report,shown,hit=research.analyse(db,{'id':'job','settings':S,'user_id':123},meter)
+        self.assertEqual(client.responses.create.call_count,5)
+        self.assertEqual(set(shown),set(urls[:20]));self.assertFalse(hit)
+        calls=client.responses.create.call_args_list
+        self.assertEqual(sum(c.kwargs['max_tool_calls'] for c in calls),25)
+        self.assertEqual(calls[0].kwargs['text']['format']['name'],'links')
+        batches=[json.loads(c.kwargs['input'].split('\n')[0])['individual_listing_urls'] for c in calls[1:]]
+        self.assertEqual(len({x['url'] for b in batches for x in b}),20)
+        saved=[c.args[2] for c in db.request.call_args_list if c.args[0]=='POST' and c.args[1]=='bot_market_cache'][-1]['payload']
+        self.assertEqual(len(saved['pending_leads']),10)
+        self.assertIn('10 discovered links await',report)
+        for c in calls:self.assertNotIn('max_loan_eur',c.kwargs['input'])
+        self.assertNotIn('equity_eur',json.dumps(saved));self.assertNotIn('user_id',json.dumps(saved))
 
     def test_same_settings_and_data_return_previous_report(self):
         import hashlib,json
@@ -399,50 +413,35 @@ class MarketTests(unittest.TestCase):
         self.assertTrue(settlement['p_usage']['checkpoints'])
 
     def test_output_limit_keeps_verified_listing_without_paid_retry(self):
-        import json
-        db=Mock();db.rpc.return_value=True
-        def database(method,path,data=None):
-            if method=='GET' and path.startswith('bot_market_cache?cache_key') and 'rates%3A' in path: return [row('rates')]
-            return [] if method=='GET' else None
-        db.request.side_effect=database
-        response=Mock()
-        response.output_text='{"center":'+json.dumps(pool()['center'])+',"places":[],"listings":['+json.dumps(listing())+',{"url":"https://unfinished'
-        response.model_dump.return_value={'status':'incomplete','incomplete_details':{'reason':'max_output_tokens'},'usage':{'input_tokens':2000,'output_tokens':14000},'output':[{'type':'web_search_call','status':'completed','action':{'type':'open_page','url':SOURCE,'sources':[{'url':GEO},{'url':TAX}]}}]}
-        client=Mock();client.responses.create.return_value=response
-        meter={'pending':False,'cost':0,'calls':[]}
+        urls=[SOURCE+str(i) for i in range(10)]
+        db=collection_database(row());client=fake_collection_api(urls,truncated=True);meter={'pending':False,'cost':0,'calls':[]}
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI',return_value=client):
             dt.now.return_value=NOW
-            report,urls,_=research.analyse(db,{'id':'job','settings':S,'user_id':123},meter)
-        self.assertEqual(client.responses.create.call_count,3)
-        self.assertEqual(urls,[SOURCE]);self.assertIn('Partial research',report)
-        self.assertEqual(meter['calls'][0]['incomplete_reason'],'max_output_tokens')
-        self.assertTrue(meter['checkpoints']);self.assertFalse(meter['pending'])
-        self.assertTrue(any(c.args[0]=='PATCH' and c.args[1]=='bot_jobs?id=eq.job' for c in db.request.call_args_list))
+            report,shown,_=research.analyse(db,{'id':'job','settings':S,'user_id':123,'force_refresh':True},meter)
+        self.assertEqual(client.responses.create.call_count,5)
+        self.assertEqual(len(shown),5)
+        self.assertIn('Partial research',report);self.assertIn('PoolOutputLimitPartial',meter['warnings'])
+        saved=[c.args[2] for c in db.request.call_args_list if c.args[0]=='POST'][-1]['payload']
+        self.assertEqual(len(saved['pending_leads']),6)
 
     def test_batch_towns_and_dedup_preserve_every_property(self):
         import json
         p=pool([listing(url=SOURCE+'?utm_source=a')])
         p['places'] += [{'name':'Nearby','lat':48.1,'lon':7.85,'source_url':GEO},
                         {'name':'Far away','lat':53,'lon':10,'source_url':GEO}]
-        task=json.loads(research.listing_batch_prompt(S,100,NOW,1,[SOURCE],p).split('\n')[0])
-        self.assertIn('Nearby',task['priority_towns']);self.assertNotIn('Far away',task['priority_towns'])
         merged=research.merge_listing_batches(p,pool([listing(url=SOURCE),listing(url=SOURCE+'new')]))
         self.assertEqual(len(merged['listings']),2)
         text,urls=market.render(pool([listing(url=SOURCE+str(i)) for i in range(45)]),{**S,'max_price_eur':1000000,'max_loan_eur':1200000},R,(48,7.85),NOW.isoformat(),False)
         self.assertEqual(len(urls),45)
 
     def test_expansion_cost_guard_stops_extra_calls(self):
-        import json
-        db=Mock();db.rpc.return_value=True
-        db.request.side_effect=lambda method,path,data=None: [row('rates')] if method=='GET' and path.startswith('bot_market_cache?cache_key=eq.rates') else [] if method=='GET' else None
-        response=Mock();response.output_text=json.dumps(pool())
-        response.model_dump.return_value={'status':'completed','usage':{'input_tokens':400000,'output_tokens':1000},'output':[{'type':'web_search_call','action':{'type':'open_page','url':SOURCE,'sources':[{'url':GEO},{'url':TAX}]}}]}
-        meter={'pending':False,'cost':0,'calls':[]}
-        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
-            dt.now.return_value=NOW;api.return_value.responses.create.return_value=response
-            report,urls,_=research.analyse(db,{'id':'job','settings':S,'user_id':123},meter)
-        self.assertEqual(api.return_value.responses.create.call_count,1)
-        self.assertEqual(urls,[SOURCE]);self.assertIn('ExpansionStoppedAtCostGuard',meter['warnings'])
+        db=collection_database(row());client=fake_collection_api([SOURCE+'new'],expensive=True);meter={'pending':False,'cost':0,'calls':[]}
+        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI',return_value=client):
+            dt.now.return_value=NOW
+            report,shown,_=research.analyse(db,{'id':'job','settings':S,'user_id':123,'force_refresh':True},meter)
+        self.assertEqual(client.responses.create.call_count,1)
+        self.assertEqual(shown,[SOURCE]);self.assertIn('ExpansionStoppedAtCostGuard',meter['warnings'])
+        self.assertIn('1 discovered links await',report)
 
     def test_compact_discovery_does_not_fill_missing_money_with_zero(self):
         compact={k:v for k,v in listing().items() if k in research.COMPACT_FIELDS}
@@ -455,25 +454,33 @@ class MarketTests(unittest.TestCase):
         self.assertIn('rent_monthly',fields);self.assertIn('broker_pct',fields)
 
     def test_refresh_reuses_verified_center_when_new_batch_lacks_coordinates(self):
-        import json
-        old=row();new=pool([listing(url=SOURCE+'new')])
-        new['center']={'name':'Freiburg','lat':None,'lon':None,'source_url':''};new['places']=[]
-        db=Mock();db.rpc.return_value=True
-        def database(method,path,data=None):
-            if method!='GET': return None
-            if path.startswith('bot_market_cache?cache_key=eq.rates'): return [row('rates')]
-            if path.startswith('bot_market_cache?kind=eq.pool'): return [old]
-            return []
-        db.request.side_effect=database
-        response=Mock();response.output_text=json.dumps(new)
-        response.model_dump.return_value={'status':'completed','usage':{'input_tokens':1000,'output_tokens':400},'output':[{'type':'web_search_call','action':{'type':'open_page','url':SOURCE+'new','sources':[{'url':TAX}]}}]}
-        meter={'pending':False,'cost':0,'calls':[]}
-        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
-            dt.now.return_value=NOW;api.return_value.responses.create.return_value=response
-            report,urls,_=research.analyse(db,{'id':'job','settings':S,'user_id':123,'force_refresh':True},meter)
-        self.assertEqual(api.return_value.responses.create.call_count,3)
+        db=collection_database(row());client=fake_collection_api([SOURCE+'new'],no_center=True);meter={'pending':False,'cost':0,'calls':[]}
+        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI',return_value=client):
+            dt.now.return_value=NOW
+            report,shown,_=research.analyse(db,{'id':'job','settings':S,'user_id':123,'force_refresh':True},meter)
+        self.assertEqual(client.responses.create.call_count,2)
         self.assertNotIn('SearchCenterUnverified',meter.get('warnings',[]))
-        self.assertEqual(set(urls),{SOURCE,SOURCE+'new'})
+        self.assertEqual(set(shown),{SOURCE,SOURCE+'new'})
+
+    def test_discovery_rejects_invented_links_and_category_pages(self):
+        category='https://example.de/suche/apartments'
+        leads=[{'url':SOURCE+'?utm_source=x','title':'A','town':'Freiburg'},
+               {'url':SOURCE,'title':'Duplicate','town':'Freiburg'},
+               {'url':'https://invented.de/listing','title':'Fake','town':'Freiburg'},
+               {'url':category,'title':'Category','town':'Freiburg'}]
+        kept=research.validate_leads({'leads':leads},{SOURCE,category})
+        self.assertEqual([x['url'] for x in kept],[SOURCE])
+
+    def test_saved_queue_drains_without_new_discovery(self):
+        old=row();old['payload']['pending_leads']=[{'url':SOURCE+str(i),'town':'Freiburg','title':'A'} for i in range(30)]
+        db=collection_database(old);client=fake_collection_api([]);meter={'pending':False,'cost':0,'calls':[]}
+        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI',return_value=client):
+            dt.now.return_value=NOW
+            report,shown,_=research.analyse(db,{'id':'job','settings':S,'user_id':123,'force_refresh':True},meter)
+        self.assertEqual(client.responses.create.call_count,4)
+        self.assertTrue(all(c.kwargs['text']['format']['name']=='pool' for c in client.responses.create.call_args_list))
+        self.assertEqual(len(shown),21)
+        self.assertIn('10 discovered links await',report)
 
     def test_tracking_url_deduplication(self):
         self.assertEqual(market.url(SOURCE+'?utm_source=test'),SOURCE)
