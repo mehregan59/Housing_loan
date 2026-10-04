@@ -3,6 +3,7 @@ const env = (key: string) => { const v = Deno.env.get(key); if (!v) throw new Er
 const NOTICE = 'Estimates only; general information, not financial advice or a financing commitment. Verify independently before deciding. Listing data may be incomplete. Settings and reports are stored in Supabase; analysis uses OpenAI; Telegram delivers messages. API costs are reported to the administrator. Do not send bank credentials or identity documents. /support forwards your message and Telegram ID to the administrator. This is a private pilot, not a publicly launched service.';
 const HELP = `Housing Loan Bot — Germany pilot
 /start — read notice and accept
+/guide — step-by-step setup before your first analysis
 /settings — your investment settings; tap buttons to edit each field
 /cancel — cancel the current edit
 /set FIELD VALUE — change one setting
@@ -22,6 +23,7 @@ Example: /set max_price_eur 250000
 Free: 1 report/week. Paid: up to 7. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. Manual membership during pilot. Delivery may be delayed; changing schedule does not add reports. If a report fails, use /support; repeated clicks cannot start parallel analyses.
 Editable numeric fields: max_loan_eur, equity_eur, max_price_eur, min_size_m2, radius_km, max_price_per_m2, target_gross_yield_pct, min_monthly_cashflow_eur, fixed_rate_years, repayment_pct. Optional targets accept "none". /set language en, de or fa. Other countries will require country-specific rules in a future release.`;
 const HELP_FA=`راهنمای ربات مسکن — آلمان
+/guide — راهنمای گام‌به‌گام قبل از اولین تحلیل
 /settings — تنظیمات؛ برای تغییر هر مورد دکمه را بزنید
 /set language fa — گزارش فارسی
 /set language en — گزارش انگلیسی
@@ -153,8 +155,51 @@ const settingsButtons={inline_keyboard:[
   [button('🔎 Edit search','menu:search'),button('🏦 Edit financing','menu:finance')],
   [button('🎯 Investment targets','menu:targets'),button('🚫 Exclusions','menu:exclude')],
   [button('📅 Change schedule','menu:schedule')],
-  [button('🔎 Run analysis','run'),button('❓ Help','help')]
+  [button('🔎 Run analysis','run'),button('❓ Help','help')],
+  [button('📖 Continue guide','guide:resume')]
 ]};
+export function setupGuide(step:number,language:string,user:any) {
+  const fa=language==='fa',de=language==='de';
+  const t=(en:string,ger:string,per:string)=>fa?per:de?ger:en;
+  const lessons=[
+    t('📖 1/7 — Start here\nThis bot screens German apartments for rental investment. Reports are estimates, not financing approval or advice. It searches a limited set of public adverts, not every apartment on the market. Settings, help and opening saved details do not cost AI money.\nChoose your report language below, then Next. You can return with /guide at any time.',
+      '📖 1/7 — Einstieg\nDer Bot prüft deutsche Wohnungen zur Vermietung. Berichte sind Schätzungen, keine Finanzierungszusage oder Beratung. Die Suche ist eine begrenzte Stichprobe, kein vollständiger Marktbestand. Einstellungen, Hilfe und gespeicherte Details verursachen keine KI-Kosten.\nSprache wählen, dann Weiter. /guide öffnet diese Anleitung erneut.',
+      '📖 ۱/۷ — شروع\nاین ربات آپارتمان‌های آلمان را برای سرمایه‌گذاری اجاره‌ای بررسی می‌کند. گزارش برآورد است، نه تأیید وام یا مشاوره. جستجو نمونه‌ای محدود از آگهی‌هاست، نه همه املاک بازار. تنظیمات، راهنما و جزئیات ذخیره‌شده هزینه هوش مصنوعی ندارند.\nزبان گزارش را انتخاب کنید و سپس «بعدی» را بزنید. /guide راهنما را دوباره باز می‌کند.'),
+    t('📍 2/7 — Choose your search\nCity is the search centre; radius is approximate straight-line distance in km. Preferred towns help ordering; they do not exclude every other town. Set maximum purchase price and minimum apartment size.\nTap Edit search, choose a field, type its new value and send it. Changes save immediately. /cancel stops an edit. Return using Continue guide.',
+      '📍 2/7 — Suche festlegen\nDie Stadt ist das Suchzentrum; der Radius ist die ungefähre Luftlinie in km. Bevorzugte Orte beeinflussen die Reihenfolge, sind kein Ausschluss anderer Orte. Maximalen Kaufpreis und Mindestfläche setzen.\nSuche bearbeiten → Feld wählen → neuen Wert senden. Änderungen werden sofort gespeichert. /cancel bricht ab; Anleitung fortsetzen führt zurück.',
+      '📍 ۲/۷ — محدوده جستجو\nشهر مرکز جستجوست؛ شعاع فاصله تقریبی مستقیم به کیلومتر است. شهرهای ترجیحی ترتیب نمایش را تغییر می‌دهند و سایر شهرها را حذف نمی‌کنند. حداکثر قیمت خرید و حداقل مساحت را تعیین کنید.\n«ویرایش جستجو» → انتخاب مورد → ارسال مقدار جدید. تغییر فوراً ذخیره می‌شود. /cancel ویرایش را لغو می‌کند؛ با «ادامه راهنما» برگردید.'),
+    t('🏦 3/7 — Set your financing\nMaximum loan is how much you are willing to borrow, not the property price. Equity is cash you can contribute. Loan need includes purchase costs. Fixed-rate years describe interest fixation, not full repayment duration. Repayment % is the initial annual repayment.\nExample: /set equity_eur 30000. Enter your real amounts before running; broad test settings can produce unrealistic choices.',
+      '🏦 3/7 — Finanzierung\nDie Kreditgrenze ist Ihr gewünschter Höchstkredit, nicht der Kaufpreis. Eigenkapital ist verfügbares Bargeld. Kreditbedarf enthält Kaufnebenkosten. Zinsbindung ist nicht die gesamte Rückzahlungsdauer; Tilgung % ist die anfängliche jährliche Tilgung.\nBeispiel: /set equity_eur 30000. Vor dem Start echte Werte statt breiter Testwerte verwenden.',
+      '🏦 ۳/۷ — تأمین مالی\nسقف وام حداکثر مبلغی است که می‌خواهید قرض بگیرید، نه قیمت ملک. آورده پول نقد قابل استفاده شماست. وام مورد نیاز شامل هزینه‌های خرید است. دوره نرخ ثابت زمان ثابت بودن بهره است، نه زمان تسویه کامل وام. درصد بازپرداخت، بازپرداخت اولیه سالانه است.\nمثال: /set equity_eur 30000. قبل از اجرا مقادیر واقعی خود را جایگزین تنظیمات آزمایشی گسترده کنید.'),
+    t('🎯 4/7 — Optional investment targets\nPrice per m² compares purchase price with size. Gross rental yield is annual cold rent ÷ price × 100, before costs. Monthly cashflow subtracts payment, owner fees and maintenance from cold rent. Positive cashflow is not guaranteed.\nYou can leave targets off; /set target_gross_yield_pct none clears a target. Strict targets reduce results. Confirmed exclusions remain excluded; missing details are flagged for seller checks.',
+      '🎯 4/7 — Optionale Ziele\n€/m² = Kaufpreis ÷ Fläche. Bruttorendite = Jahreskaltmiete ÷ Kaufpreis × 100, vor Kosten. Cashflow zieht Rate, Eigentümerkosten und Instandhaltung von der Kaltmiete ab. Positiver Cashflow ist nicht garantiert.\nZiele können aus bleiben: /set target_gross_yield_pct none. Strenge Ziele reduzieren Treffer. Bestätigte Ausschlüsse gelten; fehlende Angaben müssen beim Verkäufer geprüft werden.',
+      '🎯 ۴/۷ — معیارهای اختیاری\nقیمت هر متر مربع = قیمت خرید ÷ مساحت. بازده ناخالص = اجاره خالص سالانه ÷ قیمت خرید × ۱۰۰، پیش از هزینه‌ها. نتیجه ماهانه از اجاره، قسط، هزینه‌های مالک و ذخیره تعمیرات را کم می‌کند. جریان نقدی مثبت تضمین نشده است.\nمی‌توانید معیارها را خاموش بگذارید؛ /set target_gross_yield_pct none معیار را پاک می‌کند. معیارهای سخت‌گیرانه نتایج را کم می‌کنند. موارد مستثنای تأییدشده حذف می‌شوند؛ اطلاعات ناقص را از فروشنده بپرسید.'),
+    t('🔎 5/7 — Read a report\nThe short list shows price, size, rent, loan/payment and yield. Tap Details for full stored information, Listing for the seller advert, and Back to list to return. Rates & assumptions shows dated sources. These links do not start analysis.\n“Missing data” means a calculation cannot be completed; it is not zero. Estimated figures are labelled with their basis. /help explains every formula. All retained candidates are sent across report pages; the search itself is not exhaustive.',
+      '🔎 5/7 — Bericht lesen\nDie Übersicht zeigt Preis, Fläche, Miete, Kredit/Rate und Rendite. Details öffnet gespeicherte Angaben; Anzeige öffnet das Inserat. Zurück zur Liste führt zur Übersicht; Zinsen & Annahmen zeigt Quellen. Diese Links starten keine Analyse.\n„Fehlende Daten“ ist kein Nullwert. Schätzungen nennen ihre Grundlage. /help erklärt Formeln. Alle gespeicherten passenden Angebote werden über Seiten angezeigt; die Recherche ist nicht vollständig.',
+      '🔎 ۵/۷ — خواندن گزارش\nفهرست کوتاه قیمت، مساحت، اجاره، وام/قسط و بازده را نشان می‌دهد. «جزئیات» اطلاعات ذخیره‌شده و «آگهی» صفحه فروشنده را باز می‌کند؛ «بازگشت به فهرست» شما را برمی‌گرداند. بخش نرخ بهره و فرض‌ها منابع تاریخ‌دار را نشان می‌دهد. این پیوندها تحلیل جدید شروع نمی‌کنند.\n«اطلاعات ناقص» یعنی محاسبه کامل ممکن نیست، نه صفر. ارقام برآوردی مبنای مشخص دارند. /help فرمول‌ها را توضیح می‌دهد. همه گزینه‌های ذخیره‌شده مطابق معیارها در صفحات نمایش داده می‌شوند؛ جستجو کامل نیست.'),
+    t('📅 6/7 — Delivery and allowance\nWeekly reports start off. Set your day, time and timezone first, then enable weekly delivery if wanted. /weekly off stops scheduled reports. Free members get one report/week; paid members up to seven. Scheduled reports count too. Settings changes do not increase the allowance.\n/run reuses research when available. /saved and /last retrieve stored reports for free. Only the administrator can /refresh for additional paid research. Wait for a running job; repeated clicks cannot start a second one.',
+      '📅 6/7 — Versand und Kontingent\nWöchentliche Berichte sind anfangs aus. Erst Tag, Uhrzeit und Zeitzone setzen, dann bei Bedarf aktivieren. /weekly off beendet geplante Berichte. Kostenlos: ein Bericht/Woche; bezahlt: bis sieben. Geplante Berichte zählen mit. Einstellungen ändern erhöht das Kontingent nicht.\n/run nutzt vorhandene Recherche; /saved und /last sind kostenlos. Nur der Administrator kann mit /refresh zusätzlich recherchieren. Während eines laufenden Auftrags warten.',
+      '📅 ۶/۷ — زمان‌بندی و سهمیه\nگزارش هفتگی ابتدا خاموش است. روز، ساعت و منطقه زمانی را تعیین کنید و در صورت تمایل فعال کنید. /weekly off گزارش خودکار را متوقف می‌کند. طرح رایگان یک و طرح پولی تا هفت گزارش در هفته دارد؛ گزارش خودکار هم حساب می‌شود. تغییر تنظیمات سهمیه را بیشتر نمی‌کند.\n/run در صورت وجود از تحقیق ذخیره‌شده استفاده می‌کند. /saved و /last رایگان هستند. فقط مدیر با /refresh تحقیق پولی بیشتری انجام می‌دهد. تا پایان کار در حال اجرا صبر کنید.'),
+    t('✅ 7/7 — Review, then start\nReview your current settings below. Tap Review settings to make changes and Continue guide to return. Run analysis uses these saved settings and may consume your weekly allowance or require new research. It will reuse existing research where possible.\nNo analysis runs merely by reading this guide. If ready, tap Run with my settings. Questions: /support YOUR QUESTION.',
+      '✅ 7/7 — Prüfen, dann starten\nAktuelle Einstellungen unten prüfen. Einstellungen prüfen öffnet Änderungen; Anleitung fortsetzen führt zurück. Analyse starten verwendet diese Werte und kann Kontingent oder neue Recherche benötigen; vorhandene Daten werden wiederverwendet.\nDas Lesen startet nichts. Bei Bereitschaft Analyse starten wählen. Fragen: /support IHRE FRAGE.',
+      '✅ ۷/۷ — بررسی و شروع\nتنظیمات فعلی را در زیر بررسی کنید. «بررسی تنظیمات» برای تغییر و «ادامه راهنما» برای بازگشت است. اجرای تحلیل از این تنظیمات استفاده می‌کند و ممکن است سهمیه مصرف کند یا تحقیق جدید لازم داشته باشد؛ داده موجود در صورت امکان دوباره استفاده می‌شود.\nخواندن راهنما هیچ تحلیلی شروع نمی‌کند. اگر آماده‌اید «اجرا با تنظیمات من» را بزنید. سؤال: /support متن سؤال')
+  ];
+  if(!Number.isSafeInteger(step)||step<0||step>=lessons.length) throw new Error('Invalid guide step');
+  const rows:any[][]=[];
+  if(step===0) rows.push([button('English','lang:en'),button('Deutsch','lang:de'),button('فارسی','lang:fa')]);
+  if(step===1) rows.push([button(t('Edit search','Suche bearbeiten','ویرایش جستجو'),'menu:search')]);
+  if(step===2) rows.push([button(t('Edit financing','Finanzierung bearbeiten','ویرایش تأمین مالی'),'menu:finance')]);
+  if(step===3) rows.push([button(t('Edit targets','Ziele bearbeiten','ویرایش معیارها'),'menu:targets'),button(t('Exclusions','Ausschlüsse','موارد مستثنا'),'menu:exclude')]);
+  if(step===4) rows.push([button(t('Formulas and help','Formeln und Hilfe','فرمول‌ها و راهنما'),'help')]);
+  if(step===5) rows.push([button(t('Edit schedule','Zeitplan bearbeiten','ویرایش زمان‌بندی'),'menu:schedule')]);
+  if(step===6) rows.push([button(t('Review settings','Einstellungen prüfen','بررسی تنظیمات'),'settings'),button(t('Run with my settings','Mit Einstellungen starten','اجرا با تنظیمات من'),'run')]);
+  const navigation=[];
+  if(step) navigation.push(button(t('← Previous','← Zurück','← قبلی'),'guide:'+(step-1)));
+  if(step<6) navigation.push(button(t('Next →','Weiter →','بعدی →'),'guide:'+(step+1)));
+  if(navigation.length) rows.push(navigation);
+  return {text:lessons[step]+(step===6?'\n\n'+settingsSummary(user):''),keyboard:{inline_keyboard:rows}};
+}
+
 export function parseEdit(field:string,input:string):unknown {
   let value=input.trim();
   if (['location','areas'].includes(field)) {
@@ -281,7 +326,7 @@ async function sendReport(id:number,report:string,source:string,language:string)
   }
 }
 
-const buttons = {inline_keyboard:[[{text:'⚙️ My settings',callback_data:'settings'},{text:'🔎 Run analysis',callback_data:'run'}],[{text:'📂 Saved report (free)',callback_data:'saved'},{text:'Help',callback_data:'help'}]]};
+const buttons = {inline_keyboard:[[{text:'⚙️ My settings',callback_data:'settings'},{text:'🔎 Run analysis',callback_data:'run'}],[{text:'📂 Saved report (free)',callback_data:'saved'},{text:'Help',callback_data:'help'}],[{text:'📖 Setup guide',callback_data:'guide:resume'}]]};
 async function dispatch(job: string) {
   const repo = env('GITHUB_REPOSITORY');
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('Invalid repository');
@@ -391,6 +436,14 @@ Deno.serve(async req => {
       const clean={...user.settings}; delete clean._edit;
       await db('PATCH','bot_users?user_id=eq.'+id,{settings:clean}); user.settings=clean;
     };
+    if(user.accepted_at&&(cmd==='/guide'||action.startsWith('guide:'))) {
+      const chosen=cmd==='/guide'?0:action==='guide:resume'?(user.settings._guide_step??0):Number(action.slice(6));
+      const guide=setupGuide(chosen,user.settings.language,user);
+      await clearEdit();
+      await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_guide_step:chosen}});
+      await reply(id,guide.text,guide.keyboard);
+      return new Response('ok');
+    }
     if (user.accepted_at && /^(prop|list|notes):/.test(action)) {
       const match=/^(prop|list|notes):((?:j[0-9a-f-]{36}|s[0-9a-f]{12}))(?::(\d+))?$/.exec(action);
       if(!match) throw new Error('Invalid report navigation');
@@ -504,7 +557,8 @@ Deno.serve(async req => {
       await reply(id,NOTICE,{inline_keyboard:[[{text:'I understand — continue',callback_data:'accept'}]]});
     } else if (cmd==='/accept') {
       await db('PATCH','bot_users?user_id=eq.'+id,{accepted_at:new Date().toISOString()});
-      await reply(id,'Welcome. Use /help to see commands. Weekly delivery is initially off; /weekly on enables it.',buttons);
+      const guide=setupGuide(0,user.settings.language,user);
+      await reply(id,guide.text,guide.keyboard);
     } else if (cmd==='/help') {
       await reply(id,(user.settings.language==='fa'?HELP_FA:HELP)+'\n\n'+(user.settings.language==='fa'?CALCULATIONS_FA:user.settings.language==='de'?CALCULATIONS_DE:CALCULATIONS_EN),buttons);
     } else if (cmd==='/support') {

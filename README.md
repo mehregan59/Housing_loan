@@ -113,3 +113,6 @@ Private reports first show a compact index of every retained apartment, with pri
 
 
 The compact index now uses clickable text after gross yield: **Details · Listing**. Details and Back to list are Telegram deep links into this bot, using the same private report-owner checks as older callback buttons. These links never enqueue analysis. The original advert opens through Listing. `TELEGRAM_BOT_USERNAME` may override the public default `MeHousingLoanBot`; set the same value in worker and Edge Function environments when using another bot. No HTML parsing is used: Telegram text-link entities preserve Unicode offsets and safely display listing text.
+
+
+After accepting the notice, new users enter a seven-step setup guide. `/guide` reopens it: language, search location/limits, financing, investment targets/exclusions, reading reports, schedule/allowance and final review. Settings screens include Continue guide, which resumes the last step after editing. Guide navigation never starts or enqueues research; its final step offers an explicit Run with my settings action. Guide text supports English, German and Persian. Existing users can continue using commands directly.

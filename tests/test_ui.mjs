@@ -4,7 +4,7 @@ let handler;
 const env={TELEGRAM_WEBHOOK_SECRET:'test-secret',ADMIN_USER_ID:'123',SUPABASE_URL:'https://db.test',
   BOT_DATABASE_KEY:'fake-key',TELEGRAM_BOT_TOKEN:'fake-token'};
 globalThis.Deno={env:{get(k){return env[k];}},serve(fn){handler=fn;}};
-const {parseEdit,settingsSummary,splitReport,reportPage}=await import('../supabase/functions/telegram/index.ts');
+const {parseEdit,settingsSummary,splitReport,reportPage,setupGuide}=await import('../supabase/functions/telegram/index.ts');
 assert.equal(parseEdit('max_price_eur','€250,000'),250000);
 assert.equal(parseEdit('max_loan_eur','250.000'),250000);
 assert.equal(parseEdit('equity_eur','0'),0);
@@ -295,3 +295,24 @@ await sendAs(456,'/start prop_j00000000-0000-4000-8000-000000000002_0');
 assert.match(messages.at(-1).text,/no longer available/);
 assert.equal(queueCalls,0);
 console.log('Inline text links, deep-link details/back navigation and owner access checks passed');
+
+// Guide explains settings before offering the first run, and resumes after edits.
+for(const language of ['en','de','fa']) {
+  for(let step=0;step<7;step++) {
+    const guide=setupGuide(step,language,users.get(456));
+    const actions=guide.keyboard.inline_keyboard.flat().map(b=>b.callback_data);
+    assert.equal(actions.includes('run'),step===6);
+    if(language==='fa') assert.match(guide.text,/راهنما|جستجو|تأمین|معیار|گزارش|زمان|تنظیمات/);
+  }
+}
+await sendAs(456,'/guide');assert.match(messages.at(-1).text,/1\/7/);
+await sendAs(456,'guide:1',true);assert.equal(users.get(456).settings._guide_step,1);
+await sendAs(456,'edit:max_price_eur',true);
+await sendAs(456,'240000');assert.equal(users.get(456).settings.max_price_eur,240000);
+await sendAs(456,'guide:resume',true);assert.match(messages.at(-1).text,/2\/7/);
+assert.equal(users.get(456).settings._edit,undefined);
+await sendAs(456,'guide:6',true);
+assert.match(messages.at(-1).text,/Review, then start/);
+assert.match(messages.at(-1).text,/240,000/);
+assert.equal(queueCalls,0);assert.equal(refreshRequests,1,'Guide never requests extra paid work');
+console.log('Guide translations, final review, edit/resume and no-analysis navigation passed');
