@@ -37,7 +37,7 @@ class MarketTests(unittest.TestCase):
 
     def test_unknown_commission_never_zero_or_loan_capped(self):
         c=market.calculate(listing(broker_pct=None),S,R)
-        self.assertIsNone(c['loan']); self.assertIsNone(c['cash'])
+        self.assertAlmostEqual(c['loan'],160500); self.assertEqual(c['missing_costs'],['broker_pct']); self.assertIsNone(c['cash'])
         c=market.calculate(listing(price_eur=240000),S,R)
         self.assertGreater(c['loan'],S['max_loan_eur'])
         m,f,_=market.screen(pool([listing(price_eur=240000)]),S,R,(48,7.85))
@@ -112,7 +112,7 @@ class MarketTests(unittest.TestCase):
         text,urls=market.render(pool(items),S,R,(48,7.85),NOW.isoformat(),True)
         self.assertEqual(urls,[SOURCE])
         self.assertIn('Provisional candidate',text)
-        self.assertIn('1 meet numerical limits',text)
+        self.assertIn('1 candidates within known limits',text)
         self.assertNotIn('No confirmed matches',text)
         self.assertIn('your exclusions still apply',text)
 
@@ -122,14 +122,15 @@ class MarketTests(unittest.TestCase):
                        energy_class='',year_built=None,lat=None,lon=None) for i in range(12)]
         text,urls=market.render(pool(items),S,R,(48,7.85),NOW.isoformat(),True)
         self.assertEqual(len(urls),8)
-        self.assertIn('12 meet numerical limits',text)
+        self.assertIn('12 candidates within known limits',text)
         self.assertEqual(text.count('Provisional candidate'),8)
         self.assertIn('4 more matching properties',text)
 
     def test_location_fallback_never_substitutes_another_town(self):
         matches,_,blocks=market.screen(pool([listing(town='Unknown town',lat=None,lon=None)]),S,R,(48,7.85))
-        self.assertEqual(matches,[])
-        self.assertEqual(blocks['location unverified'],1)
+        self.assertEqual(len(matches),1)
+        self.assertIsNone(matches[0]['distance'])
+        self.assertIn('radius_km',matches[0]['checks_pending'])
 
     def test_leasehold_aliases_and_auctions_excluded(self):
         for tenure in ('Erbpacht','Erbbaurecht','Leasehold'):
@@ -149,7 +150,7 @@ class MarketTests(unittest.TestCase):
         items=[listing(url=SOURCE+str(i),price_eur=p,tax_pct=None,tenure='',auction=None) for i,p in enumerate(prices)]
         text,urls=market.render(pool(items),broad,R,(48,7.85),NOW.isoformat(),True)
         self.assertEqual(len(urls),5)
-        self.assertIn('5 meet numerical limits',text)
+        self.assertIn('5 candidates within known limits',text)
         self.assertIn('official state rate',text)
         self.assertTrue(all(x['tax_pct'] is None for x in items),'Saved research is not mutated')
 
@@ -157,7 +158,19 @@ class MarketTests(unittest.TestCase):
         x=listing(state='Bayern',tax_pct=None)
         self.assertIsNone(market.with_verified_tax(x)['tax_pct'])
         text,_=market.render(pool([x]),S,R,(48,7.85),NOW.isoformat(),True)
-        self.assertIn('Main blockers: financing data missing',text)
+        self.assertIn('excludes unknown transfer tax',text)
+
+    def test_missing_target_data_kept_and_explicitly_unchecked(self):
+        settings={**S,'target_gross_yield_pct':5,'min_monthly_cashflow_eur':100}
+        text,urls=market.render(pool([listing(rent_monthly=value(None),broker_pct=None)]),settings,R,(48,7.85),NOW.isoformat(),True)
+        self.assertEqual(urls,[SOURCE])
+        self.assertIn('not checked: loan limit, rental yield, monthly result',text)
+        self.assertIn('excludes unknown buyer commission',text)
+        self.assertNotIn('Rent covers estimated costs.',text)
+
+    def test_partial_loan_known_costs_already_over_cap_is_excluded(self):
+        matches,flex,_=market.screen(pool([listing(price_eur=400000,broker_pct=None)]),S,R,(48,7.85))
+        self.assertEqual(matches,[]);self.assertEqual(flex,[])
 
     def test_new_properties_first_seen_label_and_more_than_five(self):
         items=[listing(url=SOURCE+str(i),title='Apartment '+str(i)) for i in range(10)]
@@ -232,7 +245,7 @@ class MarketTests(unittest.TestCase):
     def test_same_settings_and_data_return_previous_report(self):
         import hashlib,json
         pr=row()
-        signature=hashlib.sha256(json.dumps({'renderer_version':4,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
+        signature=hashlib.sha256(json.dumps({'renderer_version':5,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
         db=Mock();db.request.side_effect=[[row('rates')],[pr],[{'report':'Previous report','usage':{'report_signature':signature}}]]
         meter={'pending':False,'cost':0,'calls':[]}
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
@@ -276,7 +289,9 @@ class MarketTests(unittest.TestCase):
         x=listing(town='Unverified municipality',lat=None,lon=None)
         kept=market.validate_pool(pool([x]),{SOURCE,GEO,TAX},{SOURCE})
         self.assertEqual(len(kept['listings']),1)
-        self.assertFalse(market.screen(kept,S,R,(48,7.85))[0])
+        candidate=market.screen(kept,S,R,(48,7.85))[0][0]
+        self.assertIn('radius_km',candidate['checks_pending'])
+        self.assertIsNone(candidate['distance'])
 
     def test_city_alias_reuses_verified_pool(self):
         r=row();r['payload']['center']['name']='Freiburg im Breisgau';r['payload']['places'][0]['name']='Freiburg im Breisgau'

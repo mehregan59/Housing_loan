@@ -191,14 +191,17 @@ def calculate(x,s,rates):
     r=[z['rate_pct'] for z in rates['rates']]
     midpoint=(min(r)+max(r))/2 if r else None
     stress=max(r)+1 if r else None
-    loan=None if x['broker_pct'] is None or x['tax_pct'] is None else max(0,x['price_eur']*(1+(x['tax_pct']+2+x['broker_pct'])/100)-s['equity_eur'])
+    missing_costs=[field for field in ('tax_pct','broker_pct') if x[field] is None]
+    loan=max(0,x['price_eur']*(1+(2+sum(x[field] for field in ('tax_pct','broker_pct') if x[field] is not None))/100)-s['equity_eur'])
     pay=None if loan is None or midpoint is None else loan*(midpoint+s['repayment_pct'])/1200
     stressed=None if loan is None or stress is None else loan*(stress+s['repayment_pct'])/1200
     rent=x['rent_monthly']['value']; owner=x['owner_cost_monthly']['value']
     yield_pct=None if rent is None else rent*1200/x['price_eur']
     cash=None if rent is None or owner is None or pay is None else rent-pay-owner-x['size_m2']
     stress_cash=None if cash is None else rent-stressed-owner-x['size_m2']
-    return {'loan':loan,'payment':pay,'stress_payment':stressed,'yield':yield_pct,'cash':cash,'stress_cash':stress_cash,'ppm':x['price_eur']/x['size_m2']}
+    partial_cash=cash; partial_stress_cash=stress_cash
+    if missing_costs: cash=stress_cash=None
+    return {'loan':loan,'payment':pay,'stress_payment':stressed,'yield':yield_pct,'cash':cash,'stress_cash':stress_cash,'ppm':x['price_eur']/x['size_m2'],'missing_costs':missing_costs,'partial_cash':partial_cash,'partial_stress_cash':partial_stress_cash}
 
 
 def screen(pool,s,rates,center):
@@ -210,14 +213,14 @@ def screen(pool,s,rates,center):
             candidates=[p for p in pool.get('places',[]) if location_norm(p['name'])==location_norm(x['town']) and point(p)]
             if candidates and all(distance(point(candidates[0]),point(p))<1 for p in candidates):
                 x=dict(x,lat=candidates[0]['lat'],lon=candidates[0]['lon'],location_source_url=candidates[0]['source_url'])
-        if point(x) is None:
-            blockers['location unverified']=blockers.get('location unverified',0)+1;continue
         if 'Erbpacht' in s.get('exclude',[]) and any(word in norm(x['tenure']) for word in ('erbpacht','erbbaurecht','leasehold')): continue
         if any(norm(e) in norm(x['tenure']) for e in s.get('exclude',[])) or ('Zwangsversteigerung' in s.get('exclude',[]) and x['auction'] is True): continue
         checks_pending=[]
+        if point(x) is None: checks_pending.append('radius_km')
         if 'Erbpacht' in s.get('exclude',[]) and not x['tenure']: checks_pending.append('tenure')
         if 'Zwangsversteigerung' in s.get('exclude',[]) and x['auction'] is None: checks_pending.append('auction')
-        d=distance(center,point(x)); c=calculate(x,s,rates)
+        d=distance(center,point(x)) if point(x) else None; c=calculate(x,s,rates)
+        if c['missing_costs']: checks_pending.append('max_loan_eur')
         fail=[]; mild=[]
         checks=[('max_price_eur',x['price_eur'],s['max_price_eur'],False,1.10),
                 ('min_size_m2',x['size_m2'],s['min_size_m2'],True,.90),
@@ -229,7 +232,8 @@ def screen(pool,s,rates,center):
         for field,value,limit,minimum,tolerance in checks:
             if limit is None: continue
             if value is None:
-                fail.append((field,None)); continue
+                if field not in checks_pending: checks_pending.append(field)
+                continue
             if (value<limit if minimum else value>limit):
                 fail.append((field,value))
                 nearby=(value>=limit-50) if field=='min_monthly_cashflow_eur' else (value>=limit*tolerance if minimum else value<=limit*tolerance)
@@ -239,8 +243,8 @@ def screen(pool,s,rates,center):
             blockers[label]=blockers.get(label,0)+1
         # Scores are an explicit screening rubric, with uncertainty/risk penalties.
         score=2 + (min(4,c['yield']/2) if c['yield'] is not None else 0)
-        score+=2 if c['cash'] is not None and c['cash']>=0 else 0
-        score+=1 if c['stress_cash'] is not None and c['stress_cash']>=0 else 0
+        score+=2 if not c['missing_costs'] and c['cash'] is not None and c['cash']>=0 else 0
+        score+=1 if not c['missing_costs'] and c['stress_cash'] is not None and c['stress_cash']>=0 else 0
         score-=1 if x['energy_class'].upper() in ('E','F','G','H') else 0
         score-=1 if x['owner_cost_monthly']['kind']!='actual' else 0
         score-=1 if checks_pending else 0
@@ -260,6 +264,7 @@ def render(pool,s,rates,center,checked_at,cache_hit):
             'max_price_per_m2':t('price per m²','Preis pro m²'),'target_gross_yield_pct':t('rental yield','Mietrendite'),
             'min_monthly_cashflow_eur':t('monthly result','Monatsergebnis'),
             'financing data missing':t('financing data missing','Finanzierungsdaten fehlen'),
+            'tenure':t('ownership type','Eigentumsart'),'auction':t('auction status','Auktionsstatus'),
             'location unverified':t('location unverified','Standort ungeprüft'),
             'unverified tenure/auction status':t('ownership or auction status unknown','Eigentums- oder Auktionsstatus unbekannt')}
     def money(v): return t('unknown','unbekannt') if v is None else f'€{v:,.0f}'
@@ -270,16 +275,16 @@ def render(pool,s,rates,center,checked_at,cache_hit):
     lines=[t('🏠 Apartment screening','🏠 Wohnungssuche')+' — '+s['location'],
            t('Data last researched: ','Daten zuletzt recherchiert: ')+checked_at[:10],
            t('Gross rental yield is before costs, not profit.', 'Bruttomietrendite ist vor Kosten, kein Gewinn.'),
-           t(f'{len(m)} meet numerical limits; {len(f)} nearby alternatives.',f'{len(m)} erfüllen die Zahlengrenzen; {len(f)} ähnliche Alternativen.')]
+           t(f'{len(m)} candidates within known limits; {len(f)} nearby alternatives.',f'{len(m)} Angebote innerhalb bekannter Grenzen; {len(f)} ähnliche Alternativen.')]
     if not m:
-        lines.append(t('No confirmed matches. Main blockers: ','Keine bestätigten Treffer. Hauptgrenzen: ')+(', '.join(labels[k] for k in sorted(blockers,key=blockers.get,reverse=True)[:3]) or t('insufficient verified listings','zu wenige verifizierte Angebote')))
+        lines.append(t('No candidates within known limits. Main blockers: ','Keine bestätigten Treffer. Hauptgrenzen: ')+(', '.join(labels[k] for k in sorted(blockers,key=blockers.get,reverse=True)[:3]) or t('insufficient verified listings','zu wenige verifizierte Angebote')))
     def block(item,alternative=False):
         x=item['listing']; c=item['calc']
         title='\n'+t('🔄 If you are flexible','🔄 Bei etwas Flexibilität') if alternative else '\n🏠'
         rent_kind=t({'actual':'advertised','estimate':'estimated','unknown':'unknown'}[x['rent_monthly']['kind']],{'actual':'angegeben','estimate':'geschätzt','unknown':'unbekannt'}[x['rent_monthly']['kind']])
         owner_kind=t(x['owner_cost_monthly']['kind'],{'actual':'angegeben','estimate':'geschätzt','unknown':'unbekannt'}[x['owner_cost_monthly']['kind']])
         out=[title+' — '+x['title'][:90],
-             '📍 '+x['town']+', '+x['state']+' · ~'+f'{item["distance"]:.1f} km '+t('from ','von ')+s['location'],
+             '📍 '+x['town']+', '+x['state']+ (' · ~'+f'{item["distance"]:.1f} km '+t('from ','von ')+s['location'] if item['distance'] is not None else t(' · distance unverified',' · Entfernung ungeprüft')),
              t('📈 Gross rental yield: ','📈 Bruttomietrendite: ')+(f'{c["yield"]:.2f}%' if c['yield'] is not None else t('unknown','unbekannt'))+t(' before costs',' vor Kosten'),
              t('🏦 Estimated loan needed: ','🏦 Geschätzter Kreditbedarf: ')+money(c['loan']),
              t('💵 Cold rent: ','💵 Kaltmiete: ')+money(x['rent_monthly']['value'])+t('/month','/Monat')+' · '+rent_kind,
@@ -293,9 +298,13 @@ def render(pool,s,rates,center,checked_at,cache_hit):
              t('🛠 Maintenance allowance: ','🛠 Instandhaltungsansatz: ')+money(x['size_m2'])+t('/month','/Monat'),
              t('🏗 Built: ','🏗 Baujahr: ')+(f'{x["year_built"]:.0f}' if x['year_built'] is not None else t('unknown','unbekannt'))+' · '+t('Energy: ','Energieklasse: ')+(x['energy_class'] or t('unknown','unbekannt')),
              t('⭐ Screening score: ','⭐ Suchbewertung: ')+f'{item["score"]}/10',
-             t('💬 Verdict: ','💬 Einschätzung: ')+t('Rent covers estimated costs.' if c['cash'] is not None and c['cash']>=0 else 'Needs extra money or cost clarification.','Miete deckt geschätzte Kosten.' if c['cash'] is not None and c['cash']>=0 else 'Zuzahlung oder Kostenklärung nötig.')]
+             t('💬 Verdict: ','💬 Einschätzung: ')+t('Rent covers estimated costs.' if not item['checks_pending'] and c['cash'] is not None and c['cash']>=0 else 'Needs extra money or cost clarification.','Miete deckt geschätzte Kosten.' if not item['checks_pending'] and c['cash'] is not None and c['cash']>=0 else 'Zuzahlung oder Kostenklärung nötig.')]
         if item['checks_pending']:
-            out.append(t('⚠️ Provisional candidate: ownership type or auction status is not confirmed. Ask the seller before treating this as a match; your exclusions still apply.','⚠️ Vorläufiges Angebot: Eigentumsart oder Auktionsstatus nicht bestätigt. Vor einer Einstufung als Treffer beim Verkäufer prüfen; Ihre Ausschlüsse gelten weiterhin.'))
+            out.append(t('⚠️ Provisional candidate — not checked: ','⚠️ Vorläufiges Angebot — nicht geprüft: ')+', '.join(labels[k] for k in item['checks_pending'])+t('. Confirm missing details with the seller; your exclusions still apply.','. Fehlende Angaben beim Verkäufer prüfen; Ihre Ausschlüsse gelten weiterhin.'))
+        if c['missing_costs']:
+            if c['partial_cash'] is not None: out.append(t('🔎 Monthly subtotal before missing purchase costs: ','🔎 Monatlicher Zwischenstand vor fehlenden Kaufkosten: ')+result(c['partial_cash']))
+            names={'tax_pct':t('transfer tax','Grunderwerbsteuer'),'broker_pct':t('buyer commission','Käuferprovision')}
+            out.append(t('⚠️ Partial calculation excludes unknown ','⚠️ Teilberechnung ohne unbekannte ')+', '.join(names[k] for k in c['missing_costs'])+t('. Loan and payments may be higher; financing is not confirmed.','. Kredit und Raten können höher sein; Finanzierung nicht bestätigt.'))
         if x['owner_cost_monthly']['value'] is None and x['rent_monthly']['value'] is not None and c['payment'] is not None:
             partial=x['rent_monthly']['value']-c['payment']-x['size_m2']
             out.append(t('🔎 Before unknown owner fees: ','🔎 Vor unbekannten Eigentümerkosten: ')+result(partial)+t(' (maintenance already included; final result unknown).',' (Instandhaltung bereits enthalten; Endergebnis unbekannt).'))
