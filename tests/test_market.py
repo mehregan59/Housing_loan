@@ -107,6 +107,15 @@ class MarketTests(unittest.TestCase):
         self.assertIn('Not financeable under your current loan cap',text)
         self.assertEqual(S,settings);self.assertEqual(urls,[SOURCE])
 
+    def test_unknown_exclusion_status_is_provisional_not_discarded(self):
+        items=[listing(tenure='',auction=None),listing(tenure='Erbpacht',url=SOURCE+'lease'),listing(auction=True,url=SOURCE+'auction')]
+        text,urls=market.render(pool(items),S,R,(48,7.85),NOW.isoformat(),True)
+        self.assertEqual(urls,[SOURCE])
+        self.assertIn('Provisional candidate',text)
+        self.assertIn('1 meet numerical limits',text)
+        self.assertNotIn('No confirmed matches',text)
+        self.assertIn('your exclusions still apply',text)
+
     def test_new_properties_first_seen_label_and_more_than_five(self):
         items=[listing(url=SOURCE+str(i),title='Apartment '+str(i)) for i in range(10)]
         s={**S,'_seen':{items[0]['url']}}

@@ -199,8 +199,9 @@ def screen(pool,s,rates,center):
         if point(x) is None:
             blockers['location unverified']=blockers.get('location unverified',0)+1;continue
         if any(norm(e) in norm(x['tenure']) for e in s.get('exclude',[])) or ('Zwangsversteigerung' in s.get('exclude',[]) and x['auction'] is True): continue
-        if ('Erbpacht' in s.get('exclude',[]) and not x['tenure']) or ('Zwangsversteigerung' in s.get('exclude',[]) and x['auction'] is None):
-            blockers['unverified tenure/auction status']=blockers.get('unverified tenure/auction status',0)+1; continue
+        checks_pending=[]
+        if 'Erbpacht' in s.get('exclude',[]) and not x['tenure']: checks_pending.append('tenure')
+        if 'Zwangsversteigerung' in s.get('exclude',[]) and x['auction'] is None: checks_pending.append('auction')
         d=distance(center,point(x)); c=calculate(x,s,rates)
         fail=[]; mild=[]
         checks=[('max_price_eur',x['price_eur'],s['max_price_eur'],False,1.10),
@@ -225,7 +226,8 @@ def screen(pool,s,rates,center):
         score+=1 if c['stress_cash'] is not None and c['stress_cash']>=0 else 0
         score-=1 if x['energy_class'].upper() in ('E','F','G','H') else 0
         score-=1 if x['owner_cost_monthly']['kind']!='actual' else 0
-        item={'listing':x,'calc':c,'distance':d,'score':round(max(0,min(10,score)),1),'changes':fail}
+        score-=1 if checks_pending else 0
+        item={'checks_pending':checks_pending,'listing':x,'calc':c,'distance':d,'score':round(max(0,min(10,score)),1),'changes':fail}
         if not fail: matches.append(item)
         elif len(fail)<=2 and len(mild)==len(fail): flexible.append(item)
     preferred={norm(a) for a in s.get('areas',[])}
@@ -250,7 +252,7 @@ def render(pool,s,rates,center,checked_at,cache_hit):
     lines=[t('🏠 Apartment screening','🏠 Wohnungssuche')+' — '+s['location'],
            t('Data last researched: ','Daten zuletzt recherchiert: ')+checked_at[:10],
            t('Gross rental yield is before costs, not profit.', 'Bruttomietrendite ist vor Kosten, kein Gewinn.'),
-           t(f'{len(m)} within your limits; {len(f)} nearby alternatives.',f'{len(m)} innerhalb Ihrer Grenzen; {len(f)} ähnliche Alternativen.')]
+           t(f'{len(m)} meet numerical limits; {len(f)} nearby alternatives.',f'{len(m)} erfüllen die Zahlengrenzen; {len(f)} ähnliche Alternativen.')]
     if not m:
         lines.append(t('No confirmed matches. Main blockers: ','Keine bestätigten Treffer. Hauptgrenzen: ')+(', '.join(labels[k] for k in sorted(blockers,key=blockers.get,reverse=True)[:3]) or t('insufficient verified listings','zu wenige verifizierte Angebote')))
     def block(item,alternative=False):
@@ -274,6 +276,8 @@ def render(pool,s,rates,center,checked_at,cache_hit):
              t('🏗 Built: ','🏗 Baujahr: ')+(f'{x["year_built"]:.0f}' if x['year_built'] is not None else t('unknown','unbekannt'))+' · '+t('Energy: ','Energieklasse: ')+(x['energy_class'] or t('unknown','unbekannt')),
              t('⭐ Screening score: ','⭐ Suchbewertung: ')+f'{item["score"]}/10',
              t('💬 Verdict: ','💬 Einschätzung: ')+t('Rent covers estimated costs.' if c['cash'] is not None and c['cash']>=0 else 'Needs extra money or cost clarification.','Miete deckt geschätzte Kosten.' if c['cash'] is not None and c['cash']>=0 else 'Zuzahlung oder Kostenklärung nötig.')]
+        if item['checks_pending']:
+            out.append(t('⚠️ Provisional candidate: ownership type or auction status is not confirmed. Ask the seller before treating this as a match; your exclusions still apply.','⚠️ Vorläufiges Angebot: Eigentumsart oder Auktionsstatus nicht bestätigt. Vor einer Einstufung als Treffer beim Verkäufer prüfen; Ihre Ausschlüsse gelten weiterhin.'))
         if x['owner_cost_monthly']['value'] is None and x['rent_monthly']['value'] is not None and c['payment'] is not None:
             partial=x['rent_monthly']['value']-c['payment']-x['size_m2']
             out.append(t('🔎 Before unknown owner fees: ','🔎 Vor unbekannten Eigentümerkosten: ')+result(partial)+t(' (maintenance already included; final result unknown).',' (Instandhaltung bereits enthalten; Endergebnis unbekannt).'))
@@ -313,6 +317,7 @@ def render(pool,s,rates,center,checked_at,cache_hit):
     else:
         lines.append(t('⚠️ Financing unknown: two recent nominal-rate sources unavailable.','⚠️ Finanzierung unbekannt: zwei aktuelle Sollzinsquellen fehlen.'))
     lines.append('\n'+t('📋 STILL TO CHECK','📋 NOCH ZU PRÜFEN'))
+    lines.append(t('Ask sellers to confirm ownership type, auction status, lease, owner-only building fees and planned major repairs.','Verkäufer nach Eigentumsart, Auktionsstatus, Mietvertrag, nicht umlagefähigen Kosten und geplanten größeren Sanierungen fragen.'))
     lines.append('\n'+t('⚠️ Estimates include ~2% notary/registry and €1/m² monthly maintenance. Distances use approximate town centers. Taxes on income, empty months and major repairs are excluded. Check leases, building repair plans, rent controls and availability. Zero-equity financing is not guaranteed. Scores use a fixed screening rubric, not predictions.','⚠️ Schätzungen enthalten ca. 2% Notar/Grundbuch und 1 €/m² monatliche Instandhaltung. Entfernungen beziehen sich ungefähr auf Ortszentren. Einkommensteuer, Leerstand und größere Reparaturen fehlen. Mietverträge, Sanierungspläne, Mietregeln und Verfügbarkeit prüfen. Vollfinanzierung ist nicht garantiert. Bewertungen sind Suchhilfen, keine Prognosen.'))
     lines.append(t(DISCLAIMER,'Nur Schätzungen und allgemeine Informationen, keine Finanzberatung oder Finanzierungszusage. Vor Entscheidungen selbst prüfen.'))
     return '\n'.join(lines),[i['listing']['url'] for i in shown+alternatives]
