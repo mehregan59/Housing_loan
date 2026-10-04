@@ -1,0 +1,41 @@
+name: Housing analysis worker
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'Existing queued job UUID (leave blank to sweep due users)'
+        required: false
+        type: string
+  schedule:
+    - cron: '17 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: housing-analysis
+  cancel-in-progress: false
+jobs:
+  analyse:
+    if: vars.BOT_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - name: Run queued analyses
+        env:
+          JOB_ID: ${{ inputs.job_id }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          ADMIN_USER_ID: ${{ secrets.ADMIN_USER_ID }}
+          CHANNEL_ID: ${{ secrets.CHANNEL_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -n "$JOB_ID" ]; then
+            python agent.py job --job-id "$JOB_ID"
+          else
+            python agent.py sweep
+          fi

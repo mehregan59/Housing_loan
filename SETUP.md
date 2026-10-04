@@ -1,68 +1,51 @@
-# Telegram agent pilot setup
+# Staged setup — do one stage at a time
 
-Status: setup checklist only; the agent is not deployed or operational yet.
+The code is prepared, not deployed. Keep Actions variables `BOT_ENABLED` and `HEALTH_ENABLED` unset and `bot_control.enabled=false` until instructed to activate. Existing API/bot secrets are not read by the offline tests.
 
-## Architecture
+## 1. Database (next user step)
 
-- Supabase project `liukclxefiqqrgyuoyrx`: private user settings, memberships, weekly quotas, analysis jobs, listing history and cost ledger.
-- Supabase Edge Function: receives verified Telegram webhook requests, handles commands and buttons, reserves quotas atomically and dispatches GitHub Actions.
-- GitHub Actions: runs the longer OpenAI analysis and sends results through Telegram.
-- Free users: one analysis per week. Paid users: seven. Automatic weekly reports count toward these allowances. Start invite-only, with memberships assigned manually by the admin.
-- Weekly reset: Monday 00:00 Europe/Berlin. Intended report time: Monday 08:00 Europe/Berlin; handle daylight saving and delayed Actions jobs without duplicate reports.
-- Daily maintenance workflow: check database connectivity and overdue jobs, record bounded health status and alert the administrator. No OpenAI call. This may reduce inactivity risk but does not guarantee exemption from Supabase Free project pausing.
+Open your Supabase project's SQL Editor. Paste [supabase/migrations/001_bot.sql](supabase/migrations/001_bot.sql) and run it **once**. This adds only `bot_*` tables and functions. It does not seed a personal Telegram ID or start an analysis. Stop and confirm before continuing.
 
-## GitHub Actions secrets
+## 2. Secrets
 
-Enter values at Settings > Secrets and variables > Actions. Never commit credentials or paste them into chat.
+GitHub Settings > Secrets and variables > Actions must contain:
 
-| Name | Value |
-| --- | --- |
-| OPENAI_API_KEY | Dedicated project key with enforced OpenAI spending cap |
-| TELEGRAM_BOT_TOKEN | Token from @BotFather |
-| ADMIN_USER_ID | Admin numeric Telegram user ID; private cost-report recipient |
-| SUPABASE_URL | https://liukclxefiqqrgyuoyrx.supabase.co |
-| SUPABASE_SERVICE_ROLE_KEY | Privileged backend service-role key; implementation must support the selected Supabase credential type |
-| CHANNEL_ID | Optional group/channel destination |
+- `OPENAI_API_KEY`: dedicated Housing Loan project key, with enforced $8 monthly spend limit.
+- `TELEGRAM_BOT_TOKEN`: @MeHousingLoanBot token.
+- `ADMIN_USER_ID`: operator's numeric Telegram ID.
+- `SUPABASE_URL`: `https://liukclxefiqqrgyuoyrx.supabase.co`.
+- `SUPABASE_SECRET_KEY`: newer `sb_secret_...` backend key. The worker sends it on the `apikey` header, not as a bearer JWT.
 
-The publishable key alone cannot administer the database or deploy functions. Enable RLS on private bot tables and deny public direct access. Do not use privileged keys in frontend code.
+No privileged keys, user settings or reports belong in this public repository.
 
-## Supabase Edge Function secrets
+## 3. Deploy short Telegram function
 
-- TELEGRAM_BOT_TOKEN
-- ADMIN_USER_ID
-- TELEGRAM_WEBHOOK_SECRET: random value for validating incoming Telegram webhook requests.
-- GITHUB_DISPATCH_TOKEN: fine-grained token restricted to this repository, with Actions write permission; a GitHub App credential can replace it later.
-- GITHUB_REPOSITORY: mehregan59/Housing_loan
+Deploy `supabase/functions/telegram/index.ts` as an Edge Function named `telegram`. Set JWT verification **off** for this function: Telegram authenticates through `X-Telegram-Bot-Api-Secret-Token`, verified in the code. Do not remove that check.
 
-Verify the backend credential environment provided by Supabase during deployment.
+Set function secrets:
 
-## Remaining user choices
+- `TELEGRAM_BOT_TOKEN` and `ADMIN_USER_ID` as above.
+- `TELEGRAM_WEBHOOK_SECRET`: newly generated random secret, 32+ characters, stored privately.
+- `BOT_DATABASE_KEY`: your Supabase secret key. Alternatively code uses the platform-supplied service-role key. Do not try to set reserved `SUPABASE_*` variable names manually.
+- `GITHUB_REPOSITORY`: `mehregan59/Housing_loan`.
+- `GITHUB_DISPATCH_TOKEN`: fine-grained GitHub token limited to this repository with **Actions: read/write**; expiry and renewals monitored by operator. Users never receive it.
 
-- Monthly API budget in USD and maximum cost exposure per run.
-- Initial investment settings and language, editable by each registered user.
-- Telegram bot username and pilot user allowlist.
-- Optional channel posting; default delivery is private.
+CLI alternative (local secrets entered privately, not committed): `supabase functions deploy telegram --project-ref liukclxefiqqrgyuoyrx --no-verify-jwt`. CLI deployment requires Supabase account authorization, separate from the database secret key.
 
-## Implementation and activation
+## 4. Register webhook
 
-1. Create the Telegram bot with @BotFather and open its private chat.
-2. Store secrets in dashboards.
-3. Implement and review SQL migration, RLS and atomic quota/job reservations.
-4. Apply migration through Supabase SQL Editor; deploy webhook function.
-5. Implement analysis worker, prompt, usage ledger, tests and workflow files.
-6. Test commands, quotas and retries with mocked analysis before spending API credits.
-7. Register Telegram webhook with a secret token. Verify authentication and user identity.
-8. Run one real analysis and inspect source URLs, arithmetic, Telegram delivery and cost reporting.
-9. Enable the weekly schedule and daily health check. Review first three reports before opening registration.
+Call Telegram `setWebhook` from a private local script or terminal, using the bot token, with:
 
-## Cost and reliability requirements
+- URL `https://liukclxefiqqrgyuoyrx.supabase.co/functions/v1/telegram`
+- `secret_token`: exactly the function's `TELEGRAM_WEBHOOK_SECRET`
+- `allowed_updates`: `["message","callback_query"]`
 
-- Validate identity, quota and spending allowance in the webhook and again in the worker.
-- Prevent duplicate requests caused by repeated clicks or Telegram retries.
-- Bound input history, output tokens, tool calls, retries and runtime. A client timeout alone does not guarantee server-side cancellation or prevent charges.
-- Reserve estimated budget before API calls; account for failed attempts and unknown usage conservatively.
-- Include model tokens, web-search fees and Code Interpreter containers in estimated costs. Send cost notifications privately to the administrator; hosting is separate.
-- Recover failed dispatches and stale jobs explicitly, without blindly repeating paid requests.
-- Never commit per-user financial settings, report history, database exports or secret tokens to this public repository.
+Do not put the bot token in a shared browser URL or screenshot. Set description to “German property screening with estimated financing. General information, not financial advice. Verify before deciding.” Set bot commands from the README. Open the bot, `/start`, accept the notice, and test `/help`, `/settings`, `/schedule`, `/support`. These steps make no OpenAI call.
 
-The existing README describes an earlier single-channel design. This checklist records the agreed multi-user pilot; implementation and documentation must be reconciled before launch.
+## 5. Activation — after explicit confirmation
+
+Verify offline tests pass, all settings match the operator's choices and the OpenAI hard cap is enforced. Set `bot_control.enabled=true` in Supabase; set GitHub Actions variable `BOT_ENABLED=true`. Run `/run` once and verify sources, figures and estimated costs. This is the first paid API request.
+
+After confirming that report, send `/weekly on`. Default Monday 08:00 Europe/Berlin is editable with `/schedule`. The database remains authoritative for weekly quotas and the global $8 budget. Set `HEALTH_ENABLED=true` to enable daily database health checks; this makes no OpenAI call and does not guarantee prevention of Supabase pausing.
+
+Stop spending immediately by setting `bot_control.enabled=false` and `BOT_ENABLED=false`; already-running OpenAI requests may still incur charges. Do not enable public registration or collect payments in this pilot. Admin membership grants are manual.

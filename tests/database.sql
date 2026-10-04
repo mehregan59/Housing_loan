@@ -1,0 +1,32 @@
+-- Transaction rolls back all fixtures. Run on a disposable PostgreSQL database.
+begin;
+insert into bot_users(user_id,approved,accepted_at) values(1001,true,now()),(1002,true,now()),(1003,false,now());
+do $$ declare a jsonb; b jsonb; j uuid; begin
+  a:=bot_enqueue(1001,'test-disabled');
+  if a->>'error'<>'disabled' then raise exception 'Disabled control bypass'; end if;
+  update bot_control set enabled=true;
+  a:=bot_enqueue(1003,'test-unapproved');
+  if a->>'error'<>'not_approved_or_accepted' then raise exception 'Approval bypass'; end if;
+  a:=bot_enqueue(1001,'test-first'); j:=(a->>'job_id')::uuid;
+  b:=bot_enqueue(1001,'test-first');
+  if b->>'duplicate'<>'true' then raise exception 'Duplicate not detected'; end if;
+  b:=bot_enqueue(1001,'test-other');
+  if b->>'error'<>'already_running' then raise exception 'Parallel job allowed'; end if;
+  a:=bot_claim(j);
+  if a is null then raise exception 'Claim failed'; end if;
+  if bot_claim(j) is not null then raise exception 'Double claim'; end if;
+  perform bot_finish(j,'complete',0.20,'test','{}',null,'[]');
+  b:=bot_enqueue(1001,'test-quota');
+  if b->>'error'<>'weekly_quota' then raise exception 'Free quota bypass'; end if;
+  update bot_users set plan='paid' where user_id=1001;
+  a:=bot_enqueue(1001,'test-paid'); j:=(a->>'job_id')::uuid;
+  perform bot_claim(j);
+  perform bot_finish(j,'uncertain',null,null,'{}','timeout','[]');
+  b:=bot_enqueue(1002,'test-uncertain');
+  if b->>'error'<>'usage_needs_review' then raise exception 'Unknown usage ignored'; end if;
+  update bot_jobs set charged_usd=0.30,status='failed' where id=j;
+  update bot_control set monthly_budget_usd=.50;
+  b:=bot_enqueue(1002,'test-budget');
+  if b->>'error'<>'monthly_budget' then raise exception 'Budget bypass'; end if;
+end $$;
+rollback;

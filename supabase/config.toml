@@ -1,0 +1,4 @@
+project_id = "Housing_loan"
+
+[functions.telegram]
+verify_jwt = false
