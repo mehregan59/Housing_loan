@@ -7,7 +7,7 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit, urlunsplit, quote
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -107,6 +107,20 @@ def estimate_cost(response, model=None):
                                 'containers': len(containers), 'estimate_buffer_pct': 10}
 
 
+class DatabaseFailure(RuntimeError):
+    """Safe diagnostic metadata only; never log request values or response bodies."""
+    def __init__(self,method,path,status,code):
+        table=path.split('?')[0]
+        if not re.fullmatch(r'(?:rpc/)?[a-z_]+',table): table='database'
+        if not isinstance(code,str) or not re.fullmatch(r'[A-Z0-9]{5,12}',code): code='unknown'
+        self.safe_detail=f'{method} {table}; HTTP {status}; code {code}'
+        super().__init__(self.safe_detail)
+
+
+def timestamp_filter(value):
+    return quote(value.isoformat(),safe='')
+
+
 class Backend:
     def __init__(self):
         self.http = httpx.Client(timeout=30)
@@ -116,7 +130,9 @@ class Backend:
     def request(self, method, path, data=None):
         r = self.http.request(method, self.base+path, headers=self.headers, json=data)
         if not r.is_success:
-            raise RuntimeError(f'Database request failed ({r.status_code})')
+            try: code=r.json().get('code')
+            except (ValueError,AttributeError): code=None
+            raise DatabaseFailure(method,path,r.status_code,code)
         return r.json() if r.content else None
 
     def rpc(self, name, data):
@@ -236,7 +252,7 @@ def sweep(db):
     if not control['enabled']:
         return
     now = datetime.now(timezone.utc)
-    stale = db.request('GET', 'bot_jobs?status=eq.running&started_at=lt.'+(now-timedelta(minutes=30)).isoformat())
+    stale = db.request('GET', 'bot_jobs?status=eq.running&started_at=lt.'+timestamp_filter(now-timedelta(minutes=30)))
     for job in stale:
         db.rpc('bot_finish', {'p_id':job['id'],'p_status':'uncertain','p_cost':None,'p_report':None,
                              'p_usage':{},'p_error':'InterruptedWorker','p_urls':[]})
@@ -261,26 +277,27 @@ def main():
             rows = db.request('GET', 'bot_health?id=eq.1')
             db.request('PATCH' if rows else 'POST', 'bot_health?id=eq.1' if rows else 'bot_health',
                        {'checked_at':datetime.now(timezone.utc).isoformat()} if rows else {'id':1})
-            stale = db.request('GET','bot_jobs?status=eq.queued&created_at=lt.'+(datetime.now(timezone.utc)-timedelta(hours=24)).isoformat()+'&select=id')
+            stale = db.request('GET','bot_jobs?status=eq.queued&created_at=lt.'+timestamp_filter(datetime.now(timezone.utc)-timedelta(hours=24))+'&select=id')
             if stale:
                 db.admin('⚠️ '+str(len(stale))+' analysis jobs overdue. Check GitHub Actions; no paid retry started.')
-            db.request('DELETE','bot_updates?created_at=lt.'+(datetime.now(timezone.utc)-timedelta(days=30)).isoformat())
+            db.request('DELETE','bot_updates?created_at=lt.'+timestamp_filter(datetime.now(timezone.utc)-timedelta(days=30)))
             control = db.request('GET','bot_control?id=eq.1')[0]
             if control.get('research_v2'):
-                db.request('DELETE','bot_market_cache?expires_at=lt.'+(datetime.now(timezone.utc)-timedelta(days=30)).isoformat())
+                db.request('DELETE','bot_market_cache?expires_at=lt.'+timestamp_filter(datetime.now(timezone.utc)-timedelta(days=30)))
             if control.get('shared_reports_enabled'):
-                db.request('DELETE','bot_shared_reports?expires_at=lt.'+datetime.now(timezone.utc).isoformat())
+                db.request('DELETE','bot_shared_reports?expires_at=lt.'+timestamp_filter(datetime.now(timezone.utc)))
         elif args.mode == 'job':
             import uuid
             run_job(db, str(uuid.UUID(args.job_id)))
         else:
             sweep(db)
     except Exception as exc:
+        detail=' — '+exc.safe_detail if isinstance(exc,DatabaseFailure) else ''
         try:
-            db.admin('⚠️ Bot worker/health check failed: '+type(exc).__name__+'. Check Actions. No automatic paid retry.')
+            db.admin('⚠️ Bot worker/health check failed: '+type(exc).__name__+detail+'. Check Actions. No automatic paid retry.')
         except Exception:
             pass
-        print('Worker failed: '+type(exc).__name__, file=sys.stderr)
+        print('Worker failed: '+type(exc).__name__+detail, file=sys.stderr)
         return 1
     return 0
 

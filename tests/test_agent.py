@@ -45,6 +45,26 @@ class Tests(unittest.TestCase):
         self.assertEqual(''.join(sent),text)
         self.assertEqual(pause.call_count,len(sent)-1)
 
+    def test_sweep_filters_preserve_timestamp_and_do_not_trigger_paid_work(self):
+        from urllib.parse import parse_qs,urlsplit
+        db=Mock()
+        db.request.side_effect=[[{'enabled':True}],[],[],[]]
+        with patch('agent.run_job') as run:
+            agent.sweep(db)
+        path=db.request.call_args_list[1].args[1]
+        timestamp=parse_qs(urlsplit('https://test/'+path).query)['started_at'][0][3:]
+        self.assertEqual(datetime.fromisoformat(timestamp).utcoffset().total_seconds(),0)
+        self.assertNotIn(' ',timestamp)
+        run.assert_not_called();db.rpc.assert_not_called()
+
+    def test_database_failure_reports_code_without_private_data(self):
+        db=agent.Backend.__new__(agent.Backend);db.base='https://test/';db.headers={};db.http=Mock()
+        db.http.request.return_value=Mock(is_success=False,status_code=400,json=lambda:{'code':'22007','message':'private message','details':'secret'})
+        with self.assertRaises(agent.DatabaseFailure) as failure:
+            db.request('GET','bot_jobs?private=secret')
+        self.assertIn('HTTP 400; code 22007',str(failure.exception))
+        self.assertNotIn('secret',str(failure.exception));self.assertNotIn('private',str(failure.exception))
+
     def test_summer_winter_schedule(self):
         user={'timezone':'Europe/Berlin','schedule_time':'08:00','schedule_day':0}
         self.assertEqual(agent.due_slot(user,datetime(2026,7,6,6,17,tzinfo=timezone.utc)),'2026-07-06')
