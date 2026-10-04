@@ -61,6 +61,11 @@ class Tests(unittest.TestCase):
         self.assertNotIn('charged_usd',patch_data)
         self.assertFalse(any('bot_users' in x or 'bot_jobs' in x for x in deletes))
 
+    def test_cost_notice_uses_configured_budget(self):
+        db=Mock();db.request.side_effect=[[{'charged_usd':7.04,'reserved_usd':0}],[{'monthly_budget_usd':10}]]
+        agent.finish_job(db,{'user_id':123},'job','failed',0,{},None,[],'GuideRequired')
+        self.assertIn('$7.04 / $10.00 USD budget',db.admin.call_args.args[0])
+
     def test_unverified_listing_rejected(self):
         with self.assertRaises(ValueError):
             agent.parse_report('Report\n---URLS---\nhttps://fake.example/1', {'https://real.example/1'})

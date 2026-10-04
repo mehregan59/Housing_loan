@@ -254,12 +254,22 @@ def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
             pass
     ledger = db.request('GET', 'bot_jobs?created_at=gte.'+datetime.now(timezone.utc).strftime('%Y-%m-01T00:00:00Z')+'&select=charged_usd,reserved_usd')
     total = sum(float(x['charged_usd'] if x['charged_usd'] is not None else x['reserved_usd']) for x in ledger)
+    try:
+        budget_rows=db.request('GET','bot_control?id=eq.1&select=*')
+        budget_label=f"${float(budget_rows[0]['monthly_budget_usd']):.2f} USD"
+        if budget_rows[0].get('budget_period_started_at'):
+            month_start=datetime.now(timezone.utc).replace(day=1,hour=0,minute=0,second=0,microsecond=0)
+            period=max(month_start,datetime.fromisoformat(budget_rows[0]['budget_period_started_at'].replace('Z','+00:00')))
+            ledger=db.request('GET','bot_jobs?or=(started_at.gte.'+timestamp_filter(period)+',and(started_at.is.null,created_at.gte.'+timestamp_filter(period)+'),status.in.(queued,running,uncertain))&select=charged_usd,reserved_usd')
+            total=sum(float(x['charged_usd'] if x['charged_usd'] is not None else x['reserved_usd']) for x in ledger)
+    except Exception:
+        budget_label='configured USD cap (amount unavailable)'
     models=', '.join(sorted({x.get('model','unknown') for x in usage.get('research_calls',[])})) or usage.get('model','none (no API call)')
     shown_status='partial — see report limitations' if usage.get('partial') else status
     db.admin(f"💳 Administrator only — API spending\nAnalysis status: {shown_status}\nModel: {models}\n"+
         (f"Failure code: {error}\n" if error else '')+"Estimated cost of this report: "+
         (f"${cost:.4f}" if cost is not None else 'unknown; reservation retained and analyses paused for review')+
-        f"\nThis month, including pending reports: ${total:.2f} / $8 budget\n"+
+        f"\nCurrent spending period, including pending reports: ${total:.2f} / {budget_label} budget\n"+
         f"Ordinary users do not receive this message.\nEstimate only; check OpenAI billing. Hosting, tax and currency conversion are separate.\nReference: {job_id}")
 
 
