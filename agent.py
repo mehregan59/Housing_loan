@@ -71,13 +71,14 @@ def due_slot(user, now):
     return slot.strftime('%Y-%m-%d') if timedelta(0) <= delta < timedelta(hours=24) else None
 
 
-def estimate_cost(response):
+def estimate_cost(response, model=None):
     """Standard USD prices checked 2026-10-04. Unknown models fail closed."""
     rates = {'gpt-6-astra': (10, 1, 50), 'gpt-6.1-sol': (2, .1, 10)}
-    if MODEL not in rates or not response.get('usage'):
+    model = model or MODEL
+    if model not in rates or not response.get('usage'):
         raise ValueError('Missing usage or unconfigured model pricing')
     usage = response['usage']
-    inp, cached, out = rates[MODEL]
+    inp, cached, out = rates[model]
     input_tokens = usage['input_tokens']
     output_tokens = usage['output_tokens']
     cached_tokens = (usage.get('input_tokens_details') or {}).get('cached_tokens', 0)
@@ -91,7 +92,7 @@ def estimate_cost(response):
     containers = {x.get('container_id') or x['id'] for x in calls}
     cost = ((input_tokens-cached_tokens)*inp + cached_tokens*cached + output_tokens*out)/1_000_000
     cost += searches*.01 + len(containers)*.03
-    return round(cost*1.1, 6), {**usage, 'model': MODEL, 'search_calls': searches,
+    return round(cost*1.1, 6), {**usage, 'model': model, 'search_calls': searches,
                                 'containers': len(containers), 'estimate_buffer_pct': 10}
 
 
@@ -139,17 +140,50 @@ def sources_from(response):
 
 
 def run_job(db, job_id):
-    from openai import OpenAI
     job = db.rpc('bot_claim', {'p_id': job_id})
     if not job:
         return
-    sent = False
     cost = None
     usage = {}
     report = None
     urls = []
     status = 'failed'
     error = None
+    meter = {'pending':False, 'cost':0, 'calls':[]}
+    try:
+        if job.get('research_v2'):
+            from research import analyse
+            report, urls, cache_hit = analyse(db, job, meter)
+            cost = round(meter['cost'],6)
+            usage = {'pipeline':2, 'cache_hit':cache_hit, 'research_calls':meter['calls'], 'report_signature':meter.get('report_signature')}
+            status = 'complete'
+        else:
+            report, urls, cost, usage = legacy_analysis(db, job)
+            status = 'complete'
+    except Exception as exc:
+        error = type(exc).__name__
+        if job.get('research_v2'):
+            usage = {'pipeline':2, 'research_calls':meter['calls']}
+            if meter['pending']:
+                status = 'uncertain'
+            else:
+                cost = round(meter['cost'],6)
+        elif isinstance(exc, AnalysisFailure):
+            cost, usage = exc.cost, exc.usage
+            status = 'uncertain' if cost is None else 'failed'
+        else:
+            cost = 0
+    finish_job(db,job,job_id,status,cost,usage,report,urls,error)
+
+
+class AnalysisFailure(Exception):
+    def __init__(self,cost,usage):
+        self.cost,self.usage=cost,usage
+
+
+def legacy_analysis(db,job):
+    from openai import OpenAI
+    sent=False; cost=None; usage={}
     try:
         if MODEL not in ('gpt-6-astra', 'gpt-6.1-sol'):
             raise ValueError('Unpriced model')
@@ -174,14 +208,15 @@ def run_job(db, job_id):
         report, urls = parse_report(response.output_text, sources_from(data))
         if urls and not any(x.get('type') == 'code_interpreter_call' and x.get('status') == 'completed' for x in data.get('output', [])):
             raise ValueError('Missing successful calculation tool')
-        status = 'complete'
+        return report, urls, cost, usage
     except Exception as exc:
         # Do not log exception messages: SDK/HTTP exceptions can include credentials or user data.
-        error = type(exc).__name__
-        if sent and cost is None:
-            status = 'uncertain'
-        elif not sent:
+        if not sent:
             cost = 0
+        raise AnalysisFailure(cost,usage) from None
+
+
+def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
     db.rpc('bot_finish', {'p_id': job_id, 'p_status':status, 'p_cost':cost,
         'p_report':report if status=='complete' else None, 'p_usage':usage,
         'p_error':error, 'p_urls':urls if status=='complete' else []})
@@ -241,6 +276,9 @@ def main():
             if stale:
                 db.admin('⚠️ '+str(len(stale))+' analysis jobs overdue. Check GitHub Actions; no paid retry started.')
             db.request('DELETE','bot_updates?created_at=lt.'+(datetime.now(timezone.utc)-timedelta(days=30)).isoformat())
+            control = db.request('GET','bot_control?id=eq.1')[0]
+            if control.get('research_v2'):
+                db.request('DELETE','bot_market_cache?expires_at=lt.'+(datetime.now(timezone.utc)-timedelta(days=30)).isoformat())
         elif args.mode == 'job':
             import uuid
             run_job(db, str(uuid.UUID(args.job_id)))

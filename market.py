@@ -1,0 +1,266 @@
+"""Shared source-backed research; deterministic screening and bilingual reports."""
+import hashlib
+import json
+import math
+import re
+from datetime import datetime, timedelta, timezone, date
+from urllib.parse import urlsplit, urlunsplit
+
+VERSION = 2
+TARGET_LISTINGS = 20
+MAX_LISTINGS = 30
+TTL_DAYS = 7
+DISCLAIMER = 'Estimates only; general information, not financial advice or a financing commitment. Verify independently before deciding.'
+
+
+def norm(s):
+    return ' '.join(str(s).casefold().split())
+
+
+def url(s):
+    p = urlsplit(s.strip())
+    if p.scheme not in ('http', 'https') or not p.hostname or p.username or p.password:
+        raise ValueError('Invalid URL')
+    # Tracking differences must not make one apartment appear new.
+    q = '&'.join(x for x in p.query.split('&') if x and not x.lower().startswith(('utm_', 'gclid=', 'fbclid=')))
+    return urlunsplit((p.scheme, p.netloc.lower(), p.path.rstrip('/'), q, ''))
+
+
+def obj(props):
+    return {'type':'object','properties':props,'required':list(props),'additionalProperties':False}
+
+
+def arr(item):
+    return {'type':'array','items':item}
+
+
+S = {'type':'string'}
+N = {'type':['number','null']}
+B = {'type':'boolean'}
+POINT = obj({'name':S,'lat':N,'lon':N,'source_url':S})
+VALUE = obj({'value':N,'kind':{'type':'string','enum':['actual','estimate','unknown']},'basis':S,'source_url':S})
+LISTING = obj({'url':S,'title':S,'town':S,'state':S,'country':S,'lat':N,'lon':N,
+    'location_source_url':S,'opened':B,'price_eur':N,'size_m2':N,'rent_monthly':VALUE,
+    'owner_cost_monthly':VALUE,'area_price_per_m2':VALUE,'broker_pct':N,'tax_pct':N,'tax_source_url':S,
+    'year_built':N,'energy_class':S,'tenure':S,'auction':{'type':['boolean','null']},
+    'risk_en':S,'risk_de':S})
+POOL_SCHEMA = obj({'center':POINT,'places':arr(POINT),'listings':arr(LISTING),'search_note_en':S,'search_note_de':S})
+RATE_SCHEMA = obj({'rates':arr(obj({'source_url':S,'date':S,'rate_pct':N,'rate_type':{'type':'string','enum':['nominal','effective']}}))})
+
+
+def distance(a, b):
+    lat1, lon1, lat2, lon2 = map(math.radians, (*a,*b))
+    h = math.sin((lat2-lat1)/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin((lon2-lon1)/2)**2
+    return 6371 * 2 * math.asin(math.sqrt(min(1,h)))
+
+
+def point(p):
+    a,b = p.get('lat'),p.get('lon')
+    if type(a) not in (int,float) or type(b) not in (int,float) or not math.isfinite(a+b):
+        return None
+    return (a,b) if 47 <= a <= 55.2 and 5.5 <= b <= 15.6 else None
+
+
+def number(x, low=0, high=100000000):
+    return type(x) in (int,float) and math.isfinite(x) and low <= x <= high
+
+
+def official_tax_source(source):
+    host=urlsplit(source).hostname or ''
+    domains=('baden-wuerttemberg.de','fv-bwl.de','bayern.de','bayernportal.de','brandenburg.de',
+             'berlin.de','bremen.de','hamburg.de','hessen.de','mv-regierung.de','regierung-mv.de',
+             'mecklenburg-vorpommern.de','niedersachsen.de','nrw.de','finanzverwaltung.nrw.de',
+             'rlp.de','saarland.de','sachsen.de','sachsen-anhalt.de','schleswig-holstein.de','thueringen.de')
+    return any(host==d or host.endswith('.'+d) for d in domains)
+
+
+def validate_value(v, allowed):
+    if not isinstance(v,dict) or v.get('kind') not in ('actual','estimate','unknown'):
+        raise ValueError('Invalid extracted value')
+    if v['value'] is None:
+        return {'value':None,'kind':'unknown','basis':'','source_url':''}
+    if not number(v['value']) or v['kind']=='unknown' or url(v['source_url']) not in allowed:
+        raise ValueError('Unsupported extracted value')
+    if v['kind']=='estimate' and not v['basis'].strip():
+        raise ValueError('Missing estimate basis')
+    return v
+
+
+def validate_pool(data, sources, opened_urls):
+    allowed={url(x) for x in sources}
+    center=data['center']
+    if not point(center) or url(center['source_url']) not in allowed:
+        raise ValueError('Unverified search center')
+    places=[center]
+    for p in data['places'][:60]:
+        if point(p) and url(p['source_url']) in allowed:
+            places.append(p)
+    listings=[]; seen=set(); rejected=0
+    if len(data['listings'])>MAX_LISTINGS:
+        raise ValueError('Oversized extraction')
+    for x in data['listings']:
+        try:
+            u=url(x['url'])
+            if u in seen: continue
+            if u not in allowed or u not in {url(z) for z in opened_urls} or not x['opened'] or x['country']!='Germany': raise ValueError()
+            if not point(x) or url(x['location_source_url']) not in allowed: raise ValueError()
+            if not number(x['price_eur'],1) or not number(x['size_m2'],1,2000): raise ValueError()
+            if x['broker_pct'] is not None and not number(x['broker_pct'],0,15): raise ValueError()
+            if x['tax_pct'] is not None and (not number(x['tax_pct'],3.5,6.5) or url(x['tax_source_url']) not in allowed or not official_tax_source(x['tax_source_url'])): raise ValueError()
+            x=dict(x,url=u,rent_monthly=validate_value(x['rent_monthly'],allowed),owner_cost_monthly=validate_value(x['owner_cost_monthly'],allowed),area_price_per_m2=validate_value(x['area_price_per_m2'],allowed))
+            seen.add(u); listings.append(x)
+        except (ValueError,KeyError,TypeError):
+            rejected+=1
+    return {**data,'places':places,'listings':listings,'rejected_unverified':rejected}
+
+
+def validate_rates(data,sources,now):
+    allowed={url(x) for x in sources}; rates=[]
+    for x in data['rates']:
+        try:
+            d=date.fromisoformat(x['date']); u=url(x['source_url'])
+            if u not in allowed or not number(x['rate_pct'],0.1,20) or not 0 <= (now.date()-d).days <= 14: continue
+            if x['rate_type'] not in ('nominal','effective'): continue
+            rates.append(x)
+        except (ValueError,KeyError,TypeError): continue
+    # Never mix nominal and effective rates in an annuity formula.
+    nominal=[x for x in rates if x['rate_type']=='nominal']
+    return {'rates':nominal if len({'.'.join(urlsplit(x['source_url']).hostname.split('.')[-2:]) for x in nominal})>=2 else [],
+            'note':'Two recent nominal-rate sources required; effective APR is not a contractual interest rate.'}
+
+
+def cache_key(kind,s):
+    v={'version':VERSION,'country':s.get('country','Germany')}
+    if kind=='rates': v['years']=s['fixed_rate_years']
+    else:
+        v.update(location=norm(s['location']),radius=math.ceil(float(s['radius_km'])/25)*25+5)
+    return kind+':'+hashlib.sha256(json.dumps(v,sort_keys=True).encode()).hexdigest()
+
+
+def fresh(row,now):
+    try: return row['version']==VERSION and now < datetime.fromisoformat(row['expires_at'].replace('Z','+00:00'))
+    except (KeyError,ValueError): return False
+
+
+def choose_pool(rows,s,now):
+    """Reuse nearby centers only when sourced coordinates prove radius coverage."""
+    candidates=[]
+    for r in rows:
+        if not fresh(r,now): continue
+        p=r['payload']; center=point(p['center'])
+        for place in p['places']:
+            if norm(place['name'])!=norm(s['location']) or not point(place): continue
+            gap=distance(center,point(place))
+            if gap<=5 and gap+float(s['radius_km'])+1<=r['radius_km']:
+                candidates.append((r['radius_km'],r,point(place)))
+    return min(candidates,key=lambda x:x[0])[1:] if candidates else (None,None)
+
+
+def calculate(x,s,rates):
+    r=[z['rate_pct'] for z in rates['rates']]
+    midpoint=(min(r)+max(r))/2 if r else None
+    stress=max(r)+1 if r else None
+    loan=None if x['broker_pct'] is None or x['tax_pct'] is None else max(0,x['price_eur']*(1+(x['tax_pct']+2+x['broker_pct'])/100)-s['equity_eur'])
+    pay=None if loan is None or midpoint is None else loan*(midpoint+s['repayment_pct'])/1200
+    stressed=None if loan is None or stress is None else loan*(stress+s['repayment_pct'])/1200
+    rent=x['rent_monthly']['value']; owner=x['owner_cost_monthly']['value']
+    yield_pct=None if rent is None else rent*1200/x['price_eur']
+    cash=None if rent is None or owner is None or pay is None else rent-pay-owner-x['size_m2']
+    stress_cash=None if cash is None else rent-stressed-owner-x['size_m2']
+    return {'loan':loan,'payment':pay,'stress_payment':stressed,'yield':yield_pct,'cash':cash,'stress_cash':stress_cash,'ppm':x['price_eur']/x['size_m2']}
+
+
+def screen(pool,s,rates,center):
+    matches=[]; flexible=[]; blockers={}
+    for x in pool['listings']:
+        if any(norm(e) in norm(x['tenure']) for e in s.get('exclude',[])) or ('Zwangsversteigerung' in s.get('exclude',[]) and x['auction'] is True): continue
+        if ('Erbpacht' in s.get('exclude',[]) and not x['tenure']) or ('Zwangsversteigerung' in s.get('exclude',[]) and x['auction'] is None):
+            blockers['unverified tenure/auction status']=blockers.get('unverified tenure/auction status',0)+1; continue
+        d=distance(center,point(x)); c=calculate(x,s,rates)
+        fail=[]; mild=[]
+        checks=[('max_price_eur',x['price_eur'],s['max_price_eur'],False,1.10),
+                ('min_size_m2',x['size_m2'],s['min_size_m2'],True,.90),
+                ('radius_km',d,s['radius_km'],False,1.10),
+                ('max_loan_eur',c['loan'],s['max_loan_eur'],False,1.10),
+                ('max_price_per_m2',c['ppm'],s.get('max_price_per_m2'),False,1.10),
+                ('target_gross_yield_pct',c['yield'],s.get('target_gross_yield_pct'),True,.90),
+                ('min_monthly_cashflow_eur',c['cash'],s.get('min_monthly_cashflow_eur'),True,None)]
+        for field,value,limit,minimum,tolerance in checks:
+            if limit is None: continue
+            if value is None:
+                fail.append((field,None)); continue
+            if (value<limit if minimum else value>limit):
+                fail.append((field,value))
+                nearby=(value>=limit-50) if field=='min_monthly_cashflow_eur' else (value>=limit*tolerance if minimum else value<=limit*tolerance)
+                if nearby: mild.append((field,value))
+        for f,_ in fail: blockers[f]=blockers.get(f,0)+1
+        # Scores are an explicit screening rubric, with uncertainty/risk penalties.
+        score=2 + (min(4,c['yield']/2) if c['yield'] is not None else 0)
+        score+=2 if c['cash'] is not None and c['cash']>=0 else 0
+        score+=1 if c['stress_cash'] is not None and c['stress_cash']>=0 else 0
+        score-=1 if x['energy_class'].upper() in ('E','F','G','H') else 0
+        score-=1 if x['owner_cost_monthly']['kind']!='actual' else 0
+        item={'listing':x,'calc':c,'distance':d,'score':round(max(0,min(10,score)),1),'changes':fail}
+        if not fail: matches.append(item)
+        elif len(fail)<=2 and len(mild)==len(fail): flexible.append(item)
+    preferred={norm(a) for a in s.get('areas',[])}
+    key=lambda x:(x['listing']['url'] not in s.get('_seen',set()),norm(x['listing']['town']) in preferred,x['score'],x['calc']['cash'] if x['calc']['cash'] is not None else -1e9)
+    return sorted(matches,key=key,reverse=True),sorted(flexible,key=key,reverse=True),blockers
+
+
+def render(pool,s,rates,center,checked_at,cache_hit):
+    de=s.get('language')=='de'
+    def t(en,ger): return ger if de else en
+    labels={'max_price_eur':t('purchase price','Kaufpreis'),'min_size_m2':t('minimum size','Mindestgröße'),
+            'radius_km':t('search radius','Suchradius'),'max_loan_eur':t('loan limit','Kreditgrenze'),
+            'max_price_per_m2':t('price per m²','Preis pro m²'),'target_gross_yield_pct':t('rental yield','Mietrendite'),
+            'min_monthly_cashflow_eur':t('monthly result','Monatsergebnis'),
+            'unverified tenure/auction status':t('ownership or auction status unknown','Eigentums- oder Auktionsstatus unbekannt')}
+    def money(v): return t('unknown','unbekannt') if v is None else f'€{v:,.0f}'
+    def result(v):
+        if v is None: return t('unknown: rent, financing or owner costs missing','unbekannt: Miete, Finanzierung oder Eigentümerkosten fehlen')
+        return money(abs(v))+t('/month '+('left' if v>=0 else 'extra needed'),'/Monat '+('übrig' if v>=0 else 'zuzuzahlen'))
+    m,f,blockers=screen(pool,s,rates,center)
+    lines=[t('🏠 Apartment screening','🏠 Wohnungssuche')+' — '+s['location'],
+           t('Data last researched: ','Daten zuletzt recherchiert: ')+checked_at[:10],
+           t('Shared research; your settings are calculated locally.', 'Gemeinsame Recherche; Ihre Einstellungen werden lokal berechnet.'),
+           t(f'{len(m)} within your limits; {len(f)} nearby alternatives.',f'{len(m)} innerhalb Ihrer Grenzen; {len(f)} ähnliche Alternativen.')]
+    if rates['rates']:
+        rs=rates['rates']; values=[x['rate_pct'] for x in rs]
+        lines.append(t('💶 Mortgage rates: ','💶 Sollzinsen: ')+f'{min(values):.2f}–{max(values):.2f}% '+t(f'({s["fixed_rate_years"]}-year fixed). Stress: {max(values)+1:.2f}%.',f'({s["fixed_rate_years"]} Jahre fest). Stresstest: {max(values)+1:.2f}%.'))
+        lines.extend(x['date']+' '+x['source_url'] for x in rs[:2])
+    else: lines.append(t('💶 Financing unknown: two recent nominal-rate sources unavailable.','💶 Finanzierung unbekannt: zwei aktuelle Sollzinsquellen fehlen.'))
+    if not m:
+        lines.append(t('No confirmed matches. Main blockers: ','Keine bestätigten Treffer. Hauptgrenzen: ')+(', '.join(labels[k] for k in sorted(blockers,key=blockers.get,reverse=True)[:3]) or t('insufficient verified listings','zu wenige verifizierte Angebote')))
+    def block(item,alternative=False):
+        x=item['listing']; c=item['calc']
+        title='\n'+t('🔄 If you are flexible','🔄 Bei etwas Flexibilität') if alternative else '\n🏠'
+        out=[title+' — '+x['town']+' · '+x['title'][:90],
+             f'{money(x["price_eur"])} · {x["size_m2"]:g} m² · {money(c["ppm"])}/m² · ~{item["distance"]:.1f} km',
+             t('Cold rent: ','Kaltmiete: ')+money(x['rent_monthly']['value'])+t('/month','/Monat')+' ('+t(x['rent_monthly']['kind'],{'actual':'angegeben','estimate':'geschätzt','unknown':'unbekannt'}[x['rent_monthly']['kind']])+'); '+t('gross yield ','Bruttorendite ')+(f'{c["yield"]:.2f}%' if c['yield'] is not None else t('unknown','unbekannt')),
+             t('Loan needed: ','Kreditbedarf: ')+money(c['loan'])+'; '+t('payment: ','Rate: ')+money(c['payment'])+t('/month','/Monat'),
+             t('Estimated monthly result: ','Geschätztes Monatsergebnis: ')+result(c['cash'])+'; '+t('if rates rise: ','bei höheren Zinsen: ')+result(c['stress_cash']),
+             t('Owner fees (reserves excluded): ','Eigentümerkosten (ohne Rücklagen): ')+money(x['owner_cost_monthly']['value'])+t('/month','/Monat')+' ('+t(x['owner_cost_monthly']['kind'],{'actual':'angegeben','estimate':'geschätzt','unknown':'unbekannt'}[x['owner_cost_monthly']['kind']])+')',
+             t('Screening score: ','Suchbewertung: ')+f'{item["score"]}/10. '+t('Rent covers estimated costs.' if c['cash'] is not None and c['cash']>=0 else 'Needs extra money or cost clarification.','Miete deckt geschätzte Kosten.' if c['cash'] is not None and c['cash']>=0 else 'Zuzahlung oder Kostenklärung nötig.')]
+        for field in ('rent_monthly','owner_cost_monthly'):
+            v=x[field]
+            if v['kind']=='estimate': out.append(t('Estimate basis: ','Schätzgrundlage: ')+v['basis'][:180]+' '+v['source_url'])
+        if c['loan'] is None: out.append(t('Loan unknown: buyer commission or state tax missing.','Kredit unbekannt: Käuferprovision oder Landessteuer fehlt.'))
+        benchmark=x['area_price_per_m2']['value']
+        if benchmark and benchmark>0:
+            difference=(c['ppm']/benchmark-1)*100
+            out.append(t('Area average comparison: ','Vergleich mit Gebietsdurchschnitt: ')+f'{difference:+.0f}%'+t(' (not a property valuation). ',' (keine Immobilienbewertung). ')+x['area_price_per_m2']['basis'][:120]+' '+x['area_price_per_m2']['source_url'])
+        if x['url'] in s.get('_seen',set()): out.append(t('Previously shown; still in the saved pool.','Bereits gezeigt; weiterhin im gespeicherten Bestand.'))
+        if alternative:
+            out.append(t('Outside your limits; required changes: ','Außerhalb Ihrer Grenzen; nötige Änderungen: ')+', '.join(labels[k]+' → '+(money(v) if k.endswith('_eur') else f'{v:.2f}'+(' m²' if k=='min_size_m2' else ' km' if k=='radius_km' else '%')) for k,v in item['changes']))
+            if any(k=='max_loan_eur' for k,_ in item['changes']): out.append(t('Not financeable under your current loan cap.','Mit Ihrer aktuellen Kreditgrenze nicht finanzierbar.'))
+        out.append(t('Risk: ','Risiko: ')+(x['risk_de'] if de else x['risk_en'])[:220]);out.append(x['url'])
+        return '\n'.join(out)
+    # More verified candidates, never padding; up to 8 strict + 3 flexible.
+    shown=m[:8]; alternatives=f[:3] if len(m)<5 else []
+    lines.extend(block(i) for i in shown)
+    lines.extend(block(i,True) for i in alternatives)
+    if len(m)>8: lines.append(t(f'{len(m)-8} more matching properties in the saved pool.',f'{len(m)-8} weitere passende Wohnungen im gespeicherten Bestand.'))
+    lines.append('\n'+t('⚠️ Estimates include ~2% notary/registry and €1/m² monthly maintenance. Distances use approximate town centers. Taxes on income, empty months and major repairs are excluded. Check leases, building repair plans, rent controls and availability. Zero-equity financing is not guaranteed. Scores use a fixed screening rubric, not predictions.','⚠️ Schätzungen enthalten ca. 2% Notar/Grundbuch und 1 €/m² monatliche Instandhaltung. Entfernungen beziehen sich ungefähr auf Ortszentren. Einkommensteuer, Leerstand und größere Reparaturen fehlen. Mietverträge, Sanierungspläne, Mietregeln und Verfügbarkeit prüfen. Vollfinanzierung ist nicht garantiert. Bewertungen sind Suchhilfen, keine Prognosen.'))
+    lines.append(t(DISCLAIMER,'Nur Schätzungen und allgemeine Informationen, keine Finanzberatung oder Finanzierungszusage. Vor Entscheidungen selbst prüfen.'))
+    return '\n'.join(lines),[i['listing']['url'] for i in shown+alternatives]

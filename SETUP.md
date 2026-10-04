@@ -49,3 +49,13 @@ Verify offline tests pass, all settings match the operator's choices and the Ope
 After confirming that report, send `/weekly on`. Default Monday 08:00 Europe/Berlin is editable with `/schedule`. The database remains authoritative for weekly quotas and the global $8 budget. Set `HEALTH_ENABLED=true` to enable daily database health checks; this makes no OpenAI call and does not guarantee prevention of Supabase pausing.
 
 Stop spending immediately by setting `bot_control.enabled=false` and `BOT_ENABLED=false`; already-running OpenAI requests may still incur charges. Do not enable public registration or collect payments in this pilot. Admin membership grants are manual.
+
+## Upgrade the existing pilot to shared research (one step at a time)
+
+1. With the updated GitHub code present and offline CI passing, open Supabase SQL Editor. Copy the entire `supabase/migrations/002_shared_research.sql` file into a new query and run it once. Do not replace or rerun 001. This creates a service-only public-data cache and preserves the legacy pipeline until activation. Stop here and confirm success.
+2. When ready to activate, run `update public.bot_control set research_v2=true where id=1;`. No new secret is required. The extractor defaults to `gpt-6.1-sol`. Activation itself makes no OpenAI call; the next requested/due uncached report may. Do not dispatch a test until its paid research is approved by the operator.
+3. Review one live report against the actual listing sources, including commission, owner fees/reserve split and nominal rates. Compare both fresh and cached costs before setting membership prices. A smaller model is not a guarantee of identical extraction quality.
+
+No webhook redeployment is required for v2. Existing buttons, approvals and quotas work. To switch back, set `research_v2=false`; existing public caches remain stored and legacy research may incur its old costs. The hourly Actions worker serializes all research in the `housing-analysis` concurrency group. Keep that single-worker rule; another hosting setup must implement equivalent database-backed research locking before parallel workers are enabled.
+
+The seven-day expiry is refreshed on demand by `/run` or a due weekly report, not by independent area-wide paid jobs. Cached-data coverage is limited to collected apartments, not every apartment on the market. New listings wait until the next refresh; user settings changes recalculate cached data without an extra search. Health runs remove caches expired more than 30 days ago only when enabled.
