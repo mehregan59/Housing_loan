@@ -503,6 +503,17 @@ class MarketTests(unittest.TestCase):
         report,_=market.render(pool(),settings,R,(48,7.85),NOW.isoformat(),False)
         self.assertIn('initial repayment assumption is not set',report)
 
+    def test_refused_refresh_reports_saved_data_without_false_zero_stage(self):
+        old=row();old['payload']['discovery_batches']={'planned':0,'completed':0}
+        db=collection_database(old);db.rpc.return_value=False;meter={'pending':False,'cost':0,'calls':[]}
+        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
+            dt.now.return_value=NOW
+            report,shown,hit=research.analyse(db,{'id':'job','settings':S,'user_id':123,'force_refresh':True},meter)
+        api.assert_not_called();self.assertTrue(hit)
+        self.assertIn('No new research started',report);self.assertNotIn('0/0',report)
+        self.assertEqual(shown,[SOURCE]);self.assertEqual(meter['cost'],0)
+        self.assertFalse(any(c.args[0] in ('DELETE','POST') for c in db.request.call_args_list))
+
     def test_tracking_url_deduplication(self):
         self.assertEqual(market.url(SOURCE+'?utm_source=test'),SOURCE)
 

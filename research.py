@@ -167,7 +167,10 @@ def analyse(db,job,meter):
     def extract(kind,prompt,schema,max_tools,max_output,verified_pool=None):
         nonlocal reserved
         if not reserved:
-            if not db.rpc('bot_research_reserve',{'p_id':job['id']}): return None
+            if not db.rpc('bot_research_reserve',{'p_id':job['id']}):
+                meter['reserve_refused']=True
+                meter.setdefault('warnings',[]).append('ResearchReservationRefused')
+                return None
             reserved=True
         meter['stage']=kind
         meter['pending']=True
@@ -324,6 +327,15 @@ def analyse(db,job,meter):
             pool=extra if pool is None else merge_listing_batches(pool,extra)
             # Complete items survive truncation. Remaining URLs stay queued,
             # instead of vanishing or being falsely called evaluated listings.
+        if pool is None and inherited and meter.get('reserve_refused'):
+            meter['collection_stats']={'stop_reason':'reservation_refused','queued':len(pending),'verified':len(inherited['listings'])}
+            base=supplement or previous[0]
+            meter['data_expires_at']=base['expires_at']
+            report,urls=market.render(inherited,s,rates,market.point(inherited['center']),base['created_at'],True)
+            note='⚠️ No new research started: the spending reservation was refused. These are saved apartments filtered using your current settings. No AI charge.'
+            if s.get('language')=='de':note='⚠️ Keine neue Recherche: Kostenreservierung abgelehnt. Gespeicherte Wohnungen mit aktuellen Einstellungen gefiltert. Keine KI-Kosten.'
+            if s.get('language')=='fa':note='⚠️ جستجوی جدید آغاز نشد: رزرو هزینه پذیرفته نشد. این‌ها نتایج ذخیره‌شده با تنظیمات فعلی هستند. هزینه هوش مصنوعی ندارد.'
+            return note+'\n\n'+report,urls,True
         if pool is None and inherited:
             pool=dict(inherited)
         if pool is None and pending:

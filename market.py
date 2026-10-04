@@ -315,7 +315,7 @@ def render(pool,s,rates,center,checked_at,cache_hit):
     lines=[t('🏠 Apartment screening','🏠 Wohnungssuche')+' — '+s['location'],
            t('Data last researched: ','Daten zuletzt recherchiert: ')+checked_at[:10],
            t(f'{len(pool["listings"])} researched apartments available; search coverage is limited.',f'{len(pool["listings"])} recherchierte Wohnungen verfügbar; Suche ist nicht vollständig.'),
-           *([t(f'Collection stages completed: {pool["discovery_batches"]["completed"]}/{pool["discovery_batches"]["planned"]}. This is not an exhaustive market search.',f'Sammelphasen abgeschlossen: {pool["discovery_batches"]["completed"]}/{pool["discovery_batches"]["planned"]}. Keine vollständige Marktsuche.')] if pool.get('discovery_batches') else []),
+           *([t(f'Collection stages completed: {pool["discovery_batches"]["completed"]}/{pool["discovery_batches"]["planned"]}. This is not an exhaustive market search.',f'Sammelphasen abgeschlossen: {pool["discovery_batches"]["completed"]}/{pool["discovery_batches"]["planned"]}. Keine vollständige Marktsuche.')] if pool.get('discovery_batches',{}).get('planned',0)>0 else []),
            *([t(f'{len(pool["pending_leads"])} discovered links await individual-page verification; they are not included as matches.',f'{len(pool["pending_leads"])} gefundene Links warten auf Einzelprüfung; noch keine passenden Angebote.')] if pool.get('pending_leads') else []),
            t('Gross rental yield is before costs, not profit.', 'Bruttomietrendite ist vor Kosten, kein Gewinn.'),
            t(f'{len(m)} candidates within known limits; {len(f)} nearby alternatives.',f'{len(m)} Angebote innerhalb bekannter Grenzen; {len(f)} ähnliche Alternativen.')]
