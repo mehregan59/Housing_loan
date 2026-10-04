@@ -75,7 +75,9 @@ class MarketTests(unittest.TestCase):
         text,_=market.render(p,S,R,(48,7.85),NOW.isoformat(),True)
         self.assertIn('Estimate basis: Comparable local buildings',text)
         x['owner_cost_monthly']['basis']=''
-        self.assertFalse(market.validate_pool(pool([x]),{SOURCE,GEO,TAX},{SOURCE})['listings'])
+        kept=market.validate_pool(pool([x]),{SOURCE,GEO,TAX},{SOURCE})['listings']
+        self.assertEqual(len(kept),1)
+        self.assertIsNone(kept[0]['owner_cost_monthly']['value'])
 
     def test_cache_key_does_not_include_finances_or_language(self):
         changed={**S,'max_price_eur':100000,'equity_eur':10000,'language':'de'}
@@ -193,6 +195,77 @@ class MarketTests(unittest.TestCase):
             text,urls,hit=research.analyse(db,{'id':'job','settings':S,'user_id':123,'shared_reports_enabled':True},meter)
         api.assert_not_called();db.request.assert_not_called();self.assertEqual(text,'Shared report')
         self.assertTrue(meter['shared_hit']);self.assertEqual(meter['cost'],0)
+
+    def test_partial_json_retains_only_complete_objects(self):
+        import json
+        text='{"center":'+json.dumps(pool()['center'])+',"listings":['+json.dumps(listing())+',{"price_eur":123'
+        kept=research.recover_complete_fields(text)
+        self.assertEqual(len(kept['listings']),1)
+        self.assertEqual(kept['listings'][0]['price_eur'],150000)
+        self.assertEqual(research.recover_complete_fields('not JSON'),{})
+
+    def test_bad_optional_benchmark_does_not_discard_real_property(self):
+        x=listing(area_price_per_m2={'value':5000,'kind':'actual','basis':'','source_url':'https://fake.de/data'})
+        kept=market.validate_pool(pool([x]),{SOURCE,GEO,TAX},{SOURCE})
+        self.assertEqual(len(kept['listings']),1)
+        self.assertIsNone(kept['listings'][0]['area_price_per_m2']['value'])
+
+    def test_unverified_center_is_not_invented_or_cache_match(self):
+        p=pool();p['center']['source_url']='https://fake.de/geo';p['places']=[]
+        kept=market.validate_pool(p,{SOURCE,GEO,TAX},{SOURCE})
+        self.assertIsNone(market.point(kept['center']))
+        r=row();r['payload']=kept
+        self.assertIsNone(market.choose_pool([r],S,NOW)[0])
+        text,urls=research.partial_report(kept,S,NOW.isoformat())
+        self.assertIn('no confirmed investment recommendations',text)
+        self.assertEqual(urls,[]);self.assertIn(SOURCE,text)
+
+    def test_unverified_listing_location_cannot_pass_radius(self):
+        x=listing(lat=None,lon=None)
+        kept=market.validate_pool(pool([x]),{SOURCE,GEO,TAX},{SOURCE})
+        self.assertEqual(len(kept['listings']),1)
+        self.assertFalse(market.screen(kept,S,R,(48,7.85))[0])
+
+    def test_city_alias_reuses_verified_pool(self):
+        r=row();r['payload']['center']['name']='Freiburg im Breisgau';r['payload']['places'][0]['name']='Freiburg im Breisgau'
+        self.assertIsNotNone(market.choose_pool([r],S,NOW)[0])
+        self.assertNotEqual(market.location_norm('Frankfurt am Main'),market.location_norm('Frankfurt (Oder)'))
+
+    def test_bad_unrelated_source_does_not_crash_validation(self):
+        self.assertEqual(len(market.validate_pool(pool(),{SOURCE,GEO,TAX,'not a URL'},{SOURCE})['listings']),1)
+
+    def test_named_failure_and_evidence_are_saved_without_retry(self):
+        db=Mock();db.rpc.side_effect=[{'id':'job','research_v2':True,'settings':S,'user_id':123},None]
+        db.request.side_effect=[[{'charged_usd':.1,'reserved_usd':0}]]
+        def failed(db,job,meter):
+            meter.update(cost=.1,stage='pool',checkpoints=[{'stage':'pool','extracted':{}}])
+            raise research.ResearchDataError('PoolInvalidJSON')
+        with patch('research.analyse',side_effect=failed),patch.dict('os.environ',{'ADMIN_USER_ID':'123'}): agent.run_job(db,'job')
+        settlement=db.rpc.call_args_list[1].args[1]
+        self.assertEqual(settlement['p_error'],'PoolInvalidJSON')
+        self.assertEqual(settlement['p_usage']['stage'],'pool')
+        self.assertTrue(settlement['p_usage']['checkpoints'])
+
+    def test_output_limit_keeps_verified_listing_without_paid_retry(self):
+        import json
+        db=Mock();db.rpc.return_value=True
+        def database(method,path,data=None):
+            if method=='GET' and path.startswith('bot_market_cache?cache_key') and 'rates%3A' in path: return [row('rates')]
+            return [] if method=='GET' else None
+        db.request.side_effect=database
+        response=Mock()
+        response.output_text='{"center":'+json.dumps(pool()['center'])+',"places":[],"listings":['+json.dumps(listing())+',{"url":"https://unfinished'
+        response.model_dump.return_value={'status':'incomplete','incomplete_details':{'reason':'max_output_tokens'},'usage':{'input_tokens':2000,'output_tokens':14000},'output':[{'type':'web_search_call','status':'completed','action':{'type':'open_page','url':SOURCE,'sources':[{'url':GEO},{'url':TAX}]}}]}
+        client=Mock();client.responses.create.return_value=response
+        meter={'pending':False,'cost':0,'calls':[]}
+        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI',return_value=client):
+            dt.now.return_value=NOW
+            report,urls,_=research.analyse(db,{'id':'job','settings':S,'user_id':123},meter)
+        self.assertEqual(client.responses.create.call_count,1)
+        self.assertEqual(urls,[SOURCE]);self.assertIn('Partial research',report)
+        self.assertEqual(meter['calls'][0]['incomplete_reason'],'max_output_tokens')
+        self.assertTrue(meter['checkpoints']);self.assertFalse(meter['pending'])
+        self.assertTrue(any(c.args[0]=='PATCH' and c.args[1]=='bot_jobs?id=eq.job' for c in db.request.call_args_list))
 
     def test_tracking_url_deduplication(self):
         self.assertEqual(market.url(SOURCE+'?utm_source=test'),SOURCE)

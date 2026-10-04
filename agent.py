@@ -156,13 +156,16 @@ def run_job(db, job_id):
             report, urls, cache_hit = analyse(db, job, meter)
             cost = round(meter['cost'],6)
             usage = {'pipeline':2, 'cache_hit':cache_hit, 'research_calls':meter['calls'], 'report_signature':meter.get('report_signature'), 'shared_hit':meter.get('shared_hit',False), 'shared_publish_failed':meter.get('shared_publish_failed',False)}
+            usage.update(partial=meter.get('partial',False),warnings=meter.get('warnings',[]),checkpoints=meter.get('checkpoints',[]),stage=meter.get('stage'))
             status = 'complete'
         else:
             raise ResearchUpgradeInactive()
     except Exception as exc:
         error = type(exc).__name__
         if job.get('research_v2'):
-            usage = {'pipeline':2, 'research_calls':meter['calls']}
+            from research import ResearchDataError
+            if isinstance(exc,ResearchDataError): error=exc.code
+            usage = {'pipeline':2, 'research_calls':meter['calls'],'stage':meter.get('stage'),'warnings':meter.get('warnings',[]),'checkpoints':meter.get('checkpoints',[])}
             if meter['pending']:
                 status = 'uncertain'
             else:
@@ -197,7 +200,8 @@ def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
     ledger = db.request('GET', 'bot_jobs?created_at=gte.'+datetime.now(timezone.utc).strftime('%Y-%m-01T00:00:00Z')+'&select=charged_usd,reserved_usd')
     total = sum(float(x['charged_usd'] if x['charged_usd'] is not None else x['reserved_usd']) for x in ledger)
     models=', '.join(sorted({x.get('model','unknown') for x in usage.get('research_calls',[])})) or usage.get('model','none (no API call)')
-    db.admin(f"💳 Administrator only — API spending\nAnalysis status: {status}\nModel: {models}\n"+
+    shown_status='partial — see report limitations' if usage.get('partial') else status
+    db.admin(f"💳 Administrator only — API spending\nAnalysis status: {shown_status}\nModel: {models}\n"+
         (f"Failure code: {error}\n" if error else '')+"Estimated cost of this report: "+
         (f"${cost:.4f}" if cost is not None else 'unknown; reservation retained and analyses paused for review')+
         f"\nThis month, including pending reports: ${total:.2f} / $8 budget\n"+

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone, date
 from urllib.parse import urlsplit, urlunsplit
 
 VERSION = 2
-TARGET_LISTINGS = 20
+TARGET_LISTINGS = 12
 MAX_LISTINGS = 30
 TTL_DAYS = 7
 DISCLAIMER = 'Estimates only; general information, not financial advice or a financing commitment. Verify independently before deciding.'
@@ -15,6 +15,19 @@ DISCLAIMER = 'Estimates only; general information, not financial advice or a fin
 
 def norm(s):
     return ' '.join(str(s).casefold().split())
+
+
+def location_norm(s):
+    name=norm(s)
+    return 'freiburg' if name in ('freiburg','freiburg im breisgau','freiburg i. br.') else name
+
+
+def source_set(sources):
+    valid=set()
+    for source in sources:
+        try: valid.add(url(source))
+        except (ValueError,TypeError,AttributeError): pass
+    return valid
 
 
 def url(s):
@@ -87,36 +100,45 @@ def validate_value(v, allowed):
 
 
 def validate_pool(data, sources, opened_urls):
-    allowed={url(x) for x in sources}
-    center=data['center']
-    if not point(center) or url(center['source_url']) not in allowed:
-        raise ValueError('Unverified search center')
-    places=[center]
-    for p in data['places'][:60]:
-        if point(p) and url(p['source_url']) in allowed:
-            places.append(p)
+    allowed=source_set(sources); opened=source_set(opened_urls)
+    center=data.get('center') or {'name':'','lat':None,'lon':None,'source_url':''}
+    places=[]
+    for p in [center]+data.get('places',[])[:60]:
+        try:
+            if point(p) and url(p['source_url']) in allowed: places.append(p)
+        except (ValueError,KeyError,TypeError): pass
+    if not places or center not in places:
+        center={**center,'lat':None,'lon':None}
     listings=[]; seen=set(); rejected=0
-    if len(data['listings'])>MAX_LISTINGS:
-        raise ValueError('Oversized extraction')
-    for x in data['listings']:
+    optional_unknown=0
+    for x in data.get('listings',[])[:MAX_LISTINGS]:
         try:
             u=url(x['url'])
             if u in seen: continue
-            if u not in allowed or u not in {url(z) for z in opened_urls} or not x['opened'] or x['country']!='Germany': raise ValueError()
-            if not point(x) or url(x['location_source_url']) not in allowed: raise ValueError()
+            if u not in allowed or u not in opened or not x['opened'] or x['country']!='Germany': raise ValueError()
+            x=dict(x)
+            try: located=point(x) and url(x['location_source_url']) in allowed
+            except (ValueError,KeyError,TypeError): located=False
+            if not located: x.update(lat=None,lon=None)
             if not number(x['price_eur'],1) or not number(x['size_m2'],1,2000): raise ValueError()
             if x['broker_pct'] is not None and not number(x['broker_pct'],0,15): raise ValueError()
-            if x['tax_pct'] is not None and (not number(x['tax_pct'],3.5,6.5) or url(x['tax_source_url']) not in allowed or not official_tax_source(x['tax_source_url'])): raise ValueError()
-            x=dict(x,url=u,rent_monthly=validate_value(x['rent_monthly'],allowed),owner_cost_monthly=validate_value(x['owner_cost_monthly'],allowed),area_price_per_m2=validate_value(x['area_price_per_m2'],allowed))
+            try: tax_ok=x['tax_pct'] is None or (number(x['tax_pct'],3.5,6.5) and url(x['tax_source_url']) in allowed and official_tax_source(x['tax_source_url']))
+            except (ValueError,KeyError,TypeError): tax_ok=False
+            if not tax_ok: x['tax_pct']=None;optional_unknown+=1
+            x['url']=u
+            for field in ('rent_monthly','owner_cost_monthly','area_price_per_m2'):
+                try: x[field]=validate_value(x[field],allowed)
+                except (ValueError,KeyError,TypeError):
+                    x[field]={'value':None,'kind':'unknown','basis':'','source_url':''};optional_unknown+=1
             seen.add(u); listings.append(x)
         except (ValueError,KeyError,TypeError):
             rejected+=1
-    return {**data,'places':places,'listings':listings,'rejected_unverified':rejected}
+    return {**data,'center':center,'places':places,'listings':listings,'rejected_unverified':rejected,'optional_fields_unknown':optional_unknown}
 
 
 def validate_rates(data,sources,now):
-    allowed={url(x) for x in sources}; rates=[]
-    for x in data['rates']:
+    allowed=source_set(sources); rates=[]
+    for x in data.get('rates',[]):
         try:
             d=date.fromisoformat(x['date']); u=url(x['source_url'])
             if u not in allowed or not number(x['rate_pct'],0.1,20) or not 0 <= (now.date()-d).days <= 14: continue
@@ -148,8 +170,9 @@ def choose_pool(rows,s,now):
     for r in rows:
         if not fresh(r,now): continue
         p=r['payload']; center=point(p['center'])
+        if center is None: continue
         for place in p['places']:
-            if norm(place['name'])!=norm(s['location']) or not point(place): continue
+            if location_norm(place['name'])!=location_norm(s['location']) or not point(place): continue
             gap=distance(center,point(place))
             if gap<=5 and gap+float(s['radius_km'])+1<=r['radius_km']:
                 candidates.append((r['radius_km'],r,point(place)))
@@ -173,6 +196,8 @@ def calculate(x,s,rates):
 def screen(pool,s,rates,center):
     matches=[]; flexible=[]; blockers={}
     for x in pool['listings']:
+        if point(x) is None:
+            blockers['location unverified']=blockers.get('location unverified',0)+1;continue
         if any(norm(e) in norm(x['tenure']) for e in s.get('exclude',[])) or ('Zwangsversteigerung' in s.get('exclude',[]) and x['auction'] is True): continue
         if ('Erbpacht' in s.get('exclude',[]) and not x['tenure']) or ('Zwangsversteigerung' in s.get('exclude',[]) and x['auction'] is None):
             blockers['unverified tenure/auction status']=blockers.get('unverified tenure/auction status',0)+1; continue
@@ -215,6 +240,7 @@ def render(pool,s,rates,center,checked_at,cache_hit):
             'radius_km':t('search radius','Suchradius'),'max_loan_eur':t('loan limit','Kreditgrenze'),
             'max_price_per_m2':t('price per m²','Preis pro m²'),'target_gross_yield_pct':t('rental yield','Mietrendite'),
             'min_monthly_cashflow_eur':t('monthly result','Monatsergebnis'),
+            'location unverified':t('location unverified','Standort ungeprüft'),
             'unverified tenure/auction status':t('ownership or auction status unknown','Eigentums- oder Auktionsstatus unbekannt')}
     def money(v): return t('unknown','unbekannt') if v is None else f'€{v:,.0f}'
     def result(v):
