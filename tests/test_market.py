@@ -413,7 +413,7 @@ class MarketTests(unittest.TestCase):
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI',return_value=client):
             dt.now.return_value=NOW
             report,urls,_=research.analyse(db,{'id':'job','settings':S,'user_id':123},meter)
-        self.assertEqual(client.responses.create.call_count,1)
+        self.assertEqual(client.responses.create.call_count,3)
         self.assertEqual(urls,[SOURCE]);self.assertIn('Partial research',report)
         self.assertEqual(meter['calls'][0]['incomplete_reason'],'max_output_tokens')
         self.assertTrue(meter['checkpoints']);self.assertFalse(meter['pending'])
@@ -436,13 +436,44 @@ class MarketTests(unittest.TestCase):
         db=Mock();db.rpc.return_value=True
         db.request.side_effect=lambda method,path,data=None: [row('rates')] if method=='GET' and path.startswith('bot_market_cache?cache_key=eq.rates') else [] if method=='GET' else None
         response=Mock();response.output_text=json.dumps(pool())
-        response.model_dump.return_value={'status':'completed','usage':{'input_tokens':160000,'output_tokens':1000},'output':[{'type':'web_search_call','action':{'type':'open_page','url':SOURCE,'sources':[{'url':GEO},{'url':TAX}]}}]}
+        response.model_dump.return_value={'status':'completed','usage':{'input_tokens':400000,'output_tokens':1000},'output':[{'type':'web_search_call','action':{'type':'open_page','url':SOURCE,'sources':[{'url':GEO},{'url':TAX}]}}]}
         meter={'pending':False,'cost':0,'calls':[]}
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
             dt.now.return_value=NOW;api.return_value.responses.create.return_value=response
             report,urls,_=research.analyse(db,{'id':'job','settings':S,'user_id':123},meter)
         self.assertEqual(api.return_value.responses.create.call_count,1)
-        self.assertEqual(urls,[SOURCE]);self.assertIn('ExpansionStoppedAtCostOrOutputLimit',meter['warnings'])
+        self.assertEqual(urls,[SOURCE]);self.assertIn('ExpansionStoppedAtCostGuard',meter['warnings'])
+
+    def test_compact_discovery_does_not_fill_missing_money_with_zero(self):
+        compact={k:v for k,v in listing().items() if k in research.COMPACT_FIELDS}
+        data=research.expand_discovery({'listings':[compact]})
+        self.assertIsNone(data['listings'][0]['area_price_per_m2']['value'])
+        self.assertIsNone(data['listings'][0]['lat'])
+        self.assertEqual(data['listings'][0]['rent_monthly'],compact['rent_monthly'])
+        fields=research.DISCOVERY_SCHEMA['properties']['listings']['items']['properties']
+        self.assertNotIn('area_price_per_m2',fields);self.assertNotIn('lat',fields)
+        self.assertIn('rent_monthly',fields);self.assertIn('broker_pct',fields)
+
+    def test_refresh_reuses_verified_center_when_new_batch_lacks_coordinates(self):
+        import json
+        old=row();new=pool([listing(url=SOURCE+'new')])
+        new['center']={'name':'Freiburg','lat':None,'lon':None,'source_url':''};new['places']=[]
+        db=Mock();db.rpc.return_value=True
+        def database(method,path,data=None):
+            if method!='GET': return None
+            if path.startswith('bot_market_cache?cache_key=eq.rates'): return [row('rates')]
+            if path.startswith('bot_market_cache?kind=eq.pool'): return [old]
+            return []
+        db.request.side_effect=database
+        response=Mock();response.output_text=json.dumps(new)
+        response.model_dump.return_value={'status':'completed','usage':{'input_tokens':1000,'output_tokens':400},'output':[{'type':'web_search_call','action':{'type':'open_page','url':SOURCE+'new','sources':[{'url':TAX}]}}]}
+        meter={'pending':False,'cost':0,'calls':[]}
+        with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:
+            dt.now.return_value=NOW;api.return_value.responses.create.return_value=response
+            report,urls,_=research.analyse(db,{'id':'job','settings':S,'user_id':123,'force_refresh':True},meter)
+        self.assertEqual(api.return_value.responses.create.call_count,3)
+        self.assertNotIn('SearchCenterUnverified',meter.get('warnings',[]))
+        self.assertEqual(set(urls),{SOURCE,SOURCE+'new'})
 
     def test_tracking_url_deduplication(self):
         self.assertEqual(market.url(SOURCE+'?utm_source=test'),SOURCE)
