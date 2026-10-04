@@ -59,3 +59,7 @@ Stop spending immediately by setting `bot_control.enabled=false` and `BOT_ENABLE
 No webhook redeployment is required for v2. Existing buttons, approvals and quotas work. To switch back, set `research_v2=false`; existing public caches remain stored and legacy research may incur its old costs. The hourly Actions worker serializes all research in the `housing-analysis` concurrency group. Keep that single-worker rule; another hosting setup must implement equivalent database-backed research locking before parallel workers are enabled.
 
 The seven-day expiry is refreshed on demand by `/run` or a due weekly report, not by independent area-wide paid jobs. Cached-data coverage is limited to collected apartments, not every apartment on the market. New listings wait until the next refresh; user settings changes recalculate cached data without an extra search. Health runs remove caches expired more than 30 days ago only when enabled.
+
+## Upgrade private access-request buttons
+
+Deploy the updated complete `supabase/functions/telegram/index.ts` through Supabase → Edge Functions → telegram → Code, replacing the existing file and clicking Deploy. Keep legacy JWT verification off and preserve the existing secrets and webhook. No SQL migration is required for this access-request upgrade. It works independently of the staged shared-cache upgrade. Test `/start` from an unapproved account, tap Request access, and approve/decline from the configured administrator's private bot chat. Approved accounts start free and must accept the notice. These tests make no OpenAI call.

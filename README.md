@@ -71,7 +71,11 @@ License: [LICENSE](LICENSE).
 
 ## Invite users and control their allowance
 
-Share the bot link. Unapproved users receive their Telegram ID when they send `/start`; ask them to send that ID to you. In your private administrator chat send `/approve ID`. The approved user must send `/start` again and accept the notice. They default to one report/week. Only an administrator can send `/plan ID paid` to allow seven, or `/plan ID free` to return to one. Changing settings and `/last` cost no OpenAI tokens. Cached reports still count toward the weekly report allowance.
+Share the bot link. Unapproved users tap **Request access**; the button explains that their Telegram name and ID are sent privately to the administrator. The administrator receives **Approve / Decline** buttons in their private bot chat, and the bot delivers the decision to the applicant. The administrator's username/ID is never included in applicant messages, and applicants need not contact the administrator directly. Approval starts the free plan (one report/week), then the user sends `/start` and accepts the notice. `/approve ID` remains an administrator shortcut.
+
+Pending requests cannot notify twice. Declined requests have a 24-hour cooldown measured from the request time. Each decision is bound to a request nonce and uses a conditional database update; stale buttons cannot reverse a completed decision or decide a replacement request. A saved decision is retained if the applicant's notification fails. Request state lives in internal settings metadata, excluded from OpenAI inputs and settings summaries. No new database migration or paid API call is required.
+
+Only an administrator can send `/plan ID paid` to allow seven reports/week, or `/plan ID free` to return to one. Changing settings and `/last` cost no OpenAI tokens. Cached reports still count toward the weekly report allowance.
 
 ## Shared-research upgrade
 

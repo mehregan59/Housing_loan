@@ -161,10 +161,62 @@ Deno.serve(async req => {
     replyTo=id;
     if (cb) await tg('answerCallbackQuery',{callback_query_id:cb.id});
     const admin = Number(env('ADMIN_USER_ID'));
+    const action=cb?String(cb.data):'';
     let rows = await db('GET','bot_users?user_id=eq.'+id);
     if (!rows.length && id===admin) rows = await db('POST','bot_users',{user_id:id,approved:true});
+    // Decisions are private, admin-only, and bound to the latest pending request.
+    if (action.startsWith('access:')) {
+      if (id!==admin) { await reply(id,'Only the administrator can decide access requests.'); return new Response('ok'); }
+      const match=/^access:(approve|decline):(\d+):([a-f0-9]{12})$/.exec(action);
+      if (!match) throw new Error('Invalid access decision');
+      const target=Number(match[2]);
+      if (!Number.isSafeInteger(target)||target<=0||target===admin) throw new Error('Invalid user');
+      const targets=await db('GET','bot_users?user_id=eq.'+target);
+      const candidate=targets[0];
+      if (!candidate||candidate.approved||candidate.settings?._access?.status!=='pending'||candidate.settings._access.nonce!==match[3]) {
+        await reply(id,'This request has already been decided or replaced.'); return new Response('ok');
+      }
+      const approved=match[1]==='approve';
+      const settings={...candidate.settings,_access:{...candidate.settings._access,status:approved?'approved':'declined'}};
+      const changed=await db('PATCH','bot_users?user_id=eq.'+target+'&approved=eq.false&settings->_access->>nonce=eq.'+match[3]+'&settings->_access->>status=eq.pending',
+        {approved,settings,...(approved?{plan:'free'}:{})});
+      if (!changed.length) { await reply(id,'This request has already been decided or replaced.'); return new Response('ok'); }
+      await reply(id,(approved?'✅ Approved':'Declined')+' access for Telegram ID '+target+(approved?'. Free plan: one report per week.':'.'));
+      try { await reply(target,approved?'✅ Your access is approved. Your free plan allows one report per week. Send /start and accept the notice to continue.':'Your access request was declined. You can request again 24 hours after your previous request.'); }
+      catch { await reply(id,'The decision was saved, but notification failed. The user can send /start to check access.'); }
+      return new Response('ok');
+    }
     if (!rows.length || !rows[0].approved) {
-      await reply(id,'Invite-only pilot. Your Telegram ID is '+id+'. Ask the operator for access.');
+      if (action==='request_access') {
+        if (!rows.length) rows=await db('POST','bot_users',{user_id:id,approved:false});
+        const candidate=rows[0]; const previous=candidate.settings?._access;
+        if (previous?.status==='pending') {
+          await reply(id,'Your request is waiting for approval. The bot will notify you here.'); return new Response('ok');
+        }
+        if (previous?.at&&Date.now()-previous.at<24*60*60*1000) {
+          await reply(id,'You can send another request 24 hours after your previous request.'); return new Response('ok');
+        }
+        const nonce=crypto.randomUUID().replaceAll('-','').slice(0,12);
+        const settings={...candidate.settings,_access:{status:'pending',nonce,at:Date.now()}};
+        // Conditional write also prevents duplicate webhook deliveries from notifying twice.
+        const condition=previous?.nonce?'&settings->_access->>nonce=eq.'+previous.nonce:'&settings->_access=is.null';
+        const changed=await db('PATCH','bot_users?user_id=eq.'+id+'&approved=eq.false'+condition,{settings});
+        if (!changed.length) { await reply(id,'Your request is already recorded. Send /start to check access.'); return new Response('ok'); }
+        const name=String(sender.first_name||'Telegram user').replace(/[\r\n]/g,' ').slice(0,80);
+        try {
+          await reply(admin,'📩 Access request\nName: '+name+'\nTelegram ID: '+id+'\nApproval grants the free plan: one report per week.',
+            {inline_keyboard:[[{text:'✅ Approve',callback_data:'access:approve:'+id+':'+nonce},{text:'Decline',callback_data:'access:decline:'+id+':'+nonce}]]});
+        } catch {
+          const retrySettings={...candidate.settings}; delete retrySettings._access;
+          await db('PATCH','bot_users?user_id=eq.'+id+'&approved=eq.false&settings->_access->>nonce=eq.'+nonce+'&settings->_access->>status=eq.pending',{settings:retrySettings});
+          await reply(id,'Could not send your request. Please tap Request access again later.');
+          return new Response('ok');
+        }
+        await reply(id,'✅ Access request sent. You will receive the decision here; you do not need to contact anyone privately.');
+      } else {
+        await reply(id,'This bot currently requires approval. Tap Request access to send your Telegram name and ID privately to the administrator. The decision will arrive here.',
+          {inline_keyboard:[[{text:'Request access',callback_data:'request_access'}]]});
+      }
       return new Response('ok');
     }
     const user = rows[0];
@@ -172,7 +224,6 @@ Deno.serve(async req => {
     const [rawcmd, ...parts] = text.split(/\s+/);
     const cmd = rawcmd.split('@')[0].toLowerCase();
     const rest = parts.join(' ');
-    const action=cb?String(cb.data):'';
     const clearEdit=async()=>{
       const clean={...user.settings}; delete clean._edit;
       await db('PATCH','bot_users?user_id=eq.'+id,{settings:clean}); user.settings=clean;

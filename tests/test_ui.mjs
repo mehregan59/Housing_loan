@@ -74,3 +74,84 @@ assert.equal(user.weekly,true);
 await send('lang:de',true);
 assert.equal(user.settings.language,'de');
 console.log('Webhook button/input/cancel flow passed without external calls');
+
+// Private access requests and admin decisions: no real messages, database, or API calls.
+const users=new Map([[123,structuredClone(user)]]);
+let failAdminNotification=false;
+globalThis.fetch=async(address,options={})=>{
+  if(address.startsWith('https://api.telegram.org/')) {
+    if(address.endsWith('/sendMessage')) {
+      const body=JSON.parse(options.body);
+      if(failAdminNotification&&body.chat_id===123&&body.text.startsWith('📩 Access request')) return Response.json({ok:false},{status:500});
+      messages.push(body);
+    }
+    return Response.json({ok:true});
+  }
+  const parsed=new URL(address);
+  assert.equal(parsed.pathname,'/rest/v1/bot_users','Access must never dispatch paid work');
+  const id=Number((parsed.searchParams.get('user_id')||'eq.0').slice(3));
+  if(options.method==='GET') return Response.json(users.has(id)?[structuredClone(users.get(id))]:[]);
+  const body=JSON.parse(options.body);
+  if(options.method==='POST') {
+    if(users.has(body.user_id)) return Response.json({}, {status:409});
+    const created={...structuredClone(user),user_id:body.user_id,accepted_at:null,plan:'free',settings:{...structuredClone(user.settings)},...body};
+    users.set(body.user_id,created);return Response.json([created]);
+  }
+  assert.equal(options.method,'PATCH');
+  const target=users.get(id);if(!target) return Response.json([]);
+  if(parsed.searchParams.get('approved')==='eq.false'&&target.approved) return Response.json([]);
+  const access=target.settings._access;
+  const nonce=parsed.searchParams.get('settings->_access->>nonce');
+  const status=parsed.searchParams.get('settings->_access->>status');
+  if(nonce&&access?.nonce!==nonce.slice(3)) return Response.json([]);
+  if(status&&access?.status!==status.slice(3)) return Response.json([]);
+  if(parsed.searchParams.get('settings->_access')==='is.null'&&access) return Response.json([]);
+  const changed={...target,...body};users.set(id,changed);return Response.json([structuredClone(changed)]);
+};
+async function sendAs(id,text,callback=false){
+  const message={chat:{id,type:'private'},from:{id,first_name:'Test applicant'},text};
+  const payload=callback?{callback_query:{id:'access-cb',from:message.from,message,data:text}}:{message};
+  const response=await handler(new Request('https://webhook.test',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':'test-secret'},body:JSON.stringify(payload)}));
+  assert.equal(response.status,200);
+}
+await sendAs(456,'/start');
+assert.equal(messages.at(-1).reply_markup.inline_keyboard[0][0].callback_data,'request_access');
+assert.doesNotMatch(messages.at(-1).text,/123|Ask the operator/);
+await sendAs(456,'request_access',true);
+const request=messages.findLast(m=>m.chat_id===123&&m.text.startsWith('📩 Access request'));
+assert.match(request.text,/456/);
+const approve=request.reply_markup.inline_keyboard[0][0].callback_data;
+assert.ok(approve.length<64);
+assert.equal(users.get(456).approved,false);
+const before=messages.filter(m=>m.chat_id===123&&m.text.startsWith('📩')).length;
+await sendAs(456,'request_access',true);
+assert.equal(messages.filter(m=>m.chat_id===123&&m.text.startsWith('📩')).length,before);
+await sendAs(789,approve,true);
+assert.equal(users.get(456).approved,false,'Other users cannot approve');
+users.get(456).plan='paid'; // Approval must start free even if previously marked paid.
+await sendAs(123,approve,true);
+assert.equal(users.get(456).approved,true);assert.equal(users.get(456).plan,'free');
+assert.equal(users.get(456).accepted_at,null,'Approval does not accept the notice');
+assert.ok(messages.some(m=>m.chat_id===456&&m.text.startsWith('✅ Your access')));
+await sendAs(123,approve.replace('approve','decline'),true);
+assert.equal(users.get(456).approved,true,'Stale decline cannot revoke approved user');
+await sendAs(800,'request_access',true);
+const deniedRequest=messages.findLast(m=>m.chat_id===123&&m.text.includes('Telegram ID: 800'));
+const decline=deniedRequest.reply_markup.inline_keyboard[0][1].callback_data;
+await sendAs(123,decline,true);
+assert.equal(users.get(800).approved,false);assert.equal(users.get(800).settings._access.status,'declined');
+await sendAs(800,'request_access',true);
+assert.match(messages.at(-1).text,/24 hours/);
+users.get(800).settings._access.at-=25*60*60*1000;
+await sendAs(800,'request_access',true);
+const newNonce=users.get(800).settings._access.nonce;
+await sendAs(123,decline,true);
+assert.equal(users.get(800).settings._access.nonce,newNonce);
+assert.equal(users.get(800).settings._access.status,'pending','Old buttons cannot decide replacement request');
+failAdminNotification=true;
+await sendAs(900,'request_access',true);
+assert.equal(users.get(900).settings._access,undefined,'Notification failure permits a safe retry');
+failAdminNotification=false;
+await sendAs(900,'request_access',true);
+assert.equal(users.get(900).settings._access.status,'pending');
+console.log('Private requests, admin-only decisions, free defaults, cooldown and stale buttons passed');
