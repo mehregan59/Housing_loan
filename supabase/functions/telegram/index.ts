@@ -43,6 +43,32 @@ const HELP_FA=`راهنمای ربات مسکن — آلمان
 /cancel — لغو ویرایش
 /refresh — فقط مدیر؛ جستجوی پولی برای آگهی‌های بیشتر در سقف بودجه
 طرح رایگان یک گزارش و طرح پولی تا هفت گزارش در هفته دارد. گزارش‌ها فقط برآورد هستند، نه مشاوره مالی یا تأیید وام. عنوان آگهی و متن ریسک منبع ممکن است به زبان اصلی باقی بماند.`;
+const CALCULATIONS_EN=`🧮 How the estimates work
+📈 Gross rental yield (%) = monthly cold rent × 12 ÷ purchase price × 100. This is rental income before costs, not profit.
+🏦 Loan needed = purchase price + state transfer tax + estimated 2% notary/registry + stated buyer commission − equity; never less than zero. Zero means your stated equity covers these purchase costs, not that a bank approved financing.
+💳 Monthly mortgage payment ≈ loan × (annual nominal interest % + initial annual repayment %) ÷ 1200. This is an initial annuity estimate; the fixed-rate period does not mean the loan is repaid in full during that period.
+💰 Monthly result = cold rent − mortgage payment − owner-only operating building fees − maintenance allowance (€1/m² per month). Building reserve contributions are excluded from owner fees to avoid counting maintenance twice.
+🌧 Stress payment uses the highest sourced rate + 1 percentage point, with the same repayment. It is a scenario, not an increase during a contractual fixed-rate period.
+📐 Price per m² = purchase price ÷ apartment size.
+Missing required inputs → “Missing data”, not zero. Other available criteria can still be checked; open Details for unchecked limits. A verified state tax rate may fill a missing tax field. Estimates must name their source/basis.
+Income tax, vacancy, letting costs and major unexpected repairs are excluded. Scores are a screening rubric, not predictions; incomplete rent/cashflow data is not rated. Rates & assumptions opens the report sources. Apartment buttons open saved details; Back to list returns to the overview without a new AI call.`;
+const CALCULATIONS_FA=`🧮 روش محاسبه برآوردها
+📈 بازده ناخالص اجاره (%) = اجاره خالص ماهانه × ۱۲ ÷ قیمت خرید × ۱۰۰. این درآمد پیش از هزینه‌هاست، نه سود خالص.
+🏦 وام مورد نیاز = قیمت خرید + مالیات انتقال ملک ایالت + حدود ۲٪ دفتر اسناد و ثبت ملک + کمیسیون خریدار − آورده نقدی. نتیجه کمتر از صفر نمی‌شود. صفر یعنی آورده اعلام‌شده هزینه خرید را پوشش می‌دهد؛ تأیید وام از بانک نیست.
+💳 قسط ماهانه ≈ وام × (درصد بهره اسمی سالانه + درصد بازپرداخت اولیه سالانه) ÷ ۱۲۰۰. این برآورد قسط اولیه است؛ دوره نرخ ثابت به معنی تسویه کامل وام در همان دوره نیست.
+💰 نتیجه ماهانه = اجاره خالص − قسط وام − هزینه‌های جاری ساختمان سهم مالک − ذخیره تعمیرات (ماهانه ۱ یورو برای هر متر مربع). پرداخت به ذخیره ساختمان از هزینه‌های سهم مالک حذف می‌شود تا تعمیرات دوبار حساب نشود.
+🌧 سناریوی فشار: بالاترین نرخ منبع + یک واحد درصد، با همان بازپرداخت. این به معنی تغییر نرخ در دوره ثابت قراردادی نیست.
+📐 قیمت هر متر مربع = قیمت خرید ÷ مساحت.
+اگر ورودی لازم موجود نباشد، «اطلاعات ناقص» نمایش داده می‌شود، نه صفر. بقیه معیارهای موجود بررسی می‌شوند؛ موارد بررسی‌نشده در جزئیات مشخص است. نرخ رسمی مالیات ایالت می‌تواند جای اطلاعات مالیاتی ناقص را بگیرد. برآوردها باید منبع و مبنای مشخص داشته باشند.
+مالیات درآمد، دوره بدون مستأجر، هزینه اجاره دادن و تعمیرات عمده غیرمنتظره لحاظ نشده است. امتیازها پیش‌بینی نیستند؛ با اطلاعات ناقص اجاره یا جریان نقدی امتیاز داده نمی‌شود. دکمه جزئیات اطلاعات ذخیره‌شده را باز می‌کند؛ بازگشت به فهرست هیچ درخواست جدید هوش مصنوعی ندارد.`;
+const CALCULATIONS_DE=`🧮 Berechnung der Schätzungen
+Bruttomietrendite (%) = monatliche Kaltmiete × 12 ÷ Kaufpreis × 100; vor Kosten, kein Gewinn.
+Kreditbedarf = Kaufpreis + Grunderwerbsteuer des Landes + ca. 2% Notar/Grundbuch + Käuferprovision − Eigenkapital, mindestens null. Null bedeutet ausreichendes angegebenes Eigenkapital, keine Bankzusage.
+Monatliche Rate ≈ Kredit × (Sollzins % + anfängliche jährliche Tilgung %) ÷ 1200. Die Zinsbindung ist nicht die vollständige Rückzahlungsdauer.
+Monatsergebnis = Kaltmiete − Rate − nicht umlagefähige laufende Eigentümerkosten − 1 €/m² monatliche Instandhaltung. Rücklagenzahlungen werden aus Eigentümerkosten herausgerechnet, um Doppelzählung zu vermeiden.
+Stresstest: höchster Quellenzins + 1 Prozentpunkt; keine Zinsänderung während der vereinbarten Bindung. €/m² = Kaufpreis ÷ Wohnfläche.
+Fehlende notwendige Werte → „Fehlende Daten“, niemals null Euro. Verfügbare Kriterien werden weiterhin geprüft; ungeprüfte Grenzen stehen unter Details. Amtlich bestätigte Landessteuer kann fehlende Steuerangaben ergänzen.
+Einkommensteuer, Leerstand, Vermietungskosten und größere unerwartete Reparaturen fehlen. Daten zu Miete/Cashflow unvollständig → keine Bewertung. Details und Zurück zur Liste verwenden gespeicherte Daten ohne neuen KI-Aufruf.`;
 const MAX: Record<string, [number, number]> = {
   max_loan_eur:[0,10000000],equity_eur:[0,10000000],max_price_eur:[1,10000000],
   min_size_m2:[1,2000],radius_km:[1,500],max_price_per_m2:[1,100000],
@@ -193,6 +219,56 @@ async function reply(id: number, text: string, keyboard?: unknown) {
   }
 }
 
+export function splitReport(report:string) {
+  const headings=[...report.matchAll(/^((?:🏠 — |🔄[^\n]* — ).*)$/gm)];
+  if (!headings.length) return {header:report,cards:[] as {detail:string;brief:string;url:string}[],notes:''};
+  let notesStart=report.indexOf('\n💶 ',headings.at(-1)!.index!+headings.at(-1)![0].length);
+  if(notesStart<0) notesStart=report.length;
+  const cards=[];
+  for(let i=0;i<headings.length;i++) {
+    const detail=report.slice(headings[i].index,i+1<headings.length?headings[i+1].index:notesStart).trim();
+    const lines=detail.split('\n');
+    const urls=lines.at(-1)!.match(/https?:\/\/\S+/g);
+    if(!urls) return {header:report,cards:[],notes:''};
+    const brief=[lines[0],...['📍','🏷','📐','💵','🏦','💳','📈'].flatMap(p=>lines.filter(l=>l.startsWith(p)))].join('\n');
+    cards.push({detail,brief,url:urls.at(-1)!});
+  }
+  return {header:report.slice(0,headings[0].index).trim(),cards,notes:report.slice(notesStart).trim()};
+}
+function reportLabels(language:string) {
+  return language==='fa'?['جزئیات','آگهی','نرخ بهره و فرض‌ها','صفحه','⬆️ بازگشت به فهرست']:language==='de'?['Details','Anzeige','Zinsen & Annahmen','Seite','⬆️ Zurück zur Liste']:['Details','Listing','Rates & assumptions','Page','⬆️ Back to list'];
+}
+export function reportPage(view:ReturnType<typeof splitReport>,source:string,index:number,language:string) {
+  const [details,listing,notes,pageLabel]=reportLabels(language);
+  const total=Math.ceil(view.cards.length/5);
+  if(!Number.isSafeInteger(index)||index<0||index>=total) throw new Error('Invalid report page');
+  const text=[view.header,`${pageLabel} ${index+1}/${total}`];
+  const rows:any[][]=[];
+  for(let i=index*5;i<Math.min((index+1)*5,view.cards.length);i++) {
+    const card=view.cards[i];text.push(`\n${i+1}. `+card.brief.replace(/^🏠 — /,''));
+    rows.push([{text:`${details} ${i+1}`,callback_data:`prop:${source}:${i}`},{text:'🔗 '+listing,url:card.url}]);
+  }
+  if(view.notes) text.push('\n'+view.notes.split('\n').at(-1));
+  const nav=[];
+  if(index) nav.push({text:'◀️',callback_data:`list:${source}:${index-1}`});
+  if(index+1<total) nav.push({text:'▶️',callback_data:`list:${source}:${index+1}`});
+  if(nav.length) rows.push(nav);
+  if(view.notes) rows.push([{text:'💶 '+notes,callback_data:`notes:${source}`}]);
+  return {text:text.join('\n'),keyboard:{inline_keyboard:rows}};
+}
+async function reportHash(report:string) {
+  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(report));
+  return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,12);
+}
+async function sendReport(id:number,report:string,source:string,language:string) {
+  const view=splitReport(report);
+  if(!view.cards.length) return reply(id,report);
+  for(let i=0;i<Math.ceil(view.cards.length/5);i++) {
+    const page=reportPage(view,source,i,language);
+    await reply(id,page.text,page.keyboard);
+  }
+}
+
 const buttons = {inline_keyboard:[[{text:'⚙️ My settings',callback_data:'settings'},{text:'🔎 Run analysis',callback_data:'run'}],[{text:'📂 Saved report (free)',callback_data:'saved'},{text:'Help',callback_data:'help'}]]};
 async function dispatch(job: string) {
   const repo = env('GITHUB_REPOSITORY');
@@ -299,6 +375,33 @@ Deno.serve(async req => {
       const clean={...user.settings}; delete clean._edit;
       await db('PATCH','bot_users?user_id=eq.'+id,{settings:clean}); user.settings=clean;
     };
+    if (user.accepted_at && /^(prop|list|notes):/.test(action)) {
+      const match=/^(prop|list|notes):((?:j[0-9a-f-]{36}|s[0-9a-f]{12}))(?::(\d+))?$/.exec(action);
+      if(!match) throw new Error('Invalid report navigation');
+      const [_,kind,source,rawIndex]=match;
+      let report='';
+      if(source.startsWith('j')) {
+        const stored=await db('GET','bot_jobs?id=eq.'+source.slice(1)+'&user_id=eq.'+id+'&status=eq.complete&select=report');
+        report=stored[0]?.report||'';
+      } else {
+        const stored=await db('POST','rpc/bot_saved_report',{p_user:id});
+        if(stored?.report && 's'+await reportHash(stored.report)===source) report=stored.report;
+      }
+      if(!report) { await reply(id,'This report is no longer available. Use /last or /saved.'); return new Response('ok'); }
+      const view=splitReport(report);const index=Number(rawIndex);
+      let display:string;let keyboard:unknown;
+      if(kind==='list') { const page=reportPage(view,source,index,user.settings.language);display=page.text;keyboard=page.keyboard; }
+      else {
+        if(kind==='prop'&&(!Number.isSafeInteger(index)||index<0||index>=view.cards.length)) throw new Error('Invalid apartment');
+        display=kind==='notes'?view.notes:view.cards[index].detail;
+        if(kind==='prop'&&view.notes) display+='\n\n'+view.notes.split('\n').at(-1);
+        keyboard={inline_keyboard:[[{text:reportLabels(user.settings.language)[4],callback_data:'list:'+source+':0'}]]};
+      }
+      if(message.text===display) return new Response('ok');
+      if(display.length<=3800&&message.message_id) await tg('editMessageText',{chat_id:id,message_id:message.message_id,text:display,reply_markup:keyboard,link_preview_options:{is_disabled:true}});
+      else await reply(id,display,keyboard);
+      return new Response('ok');
+    }
     if (user.accepted_at && (cmd==='/cancel'||action==='cancel')) {
       await clearEdit(); await reply(id,'Edit cancelled. Your settings are unchanged.',settingsButtons); return new Response('ok');
     }
@@ -386,7 +489,7 @@ Deno.serve(async req => {
       await db('PATCH','bot_users?user_id=eq.'+id,{accepted_at:new Date().toISOString()});
       await reply(id,'Welcome. Use /help to see commands. Weekly delivery is initially off; /weekly on enables it.',buttons);
     } else if (cmd==='/help') {
-      await reply(id,user.settings.language==='fa'?HELP_FA:HELP,buttons);
+      await reply(id,(user.settings.language==='fa'?HELP_FA:HELP)+'\n\n'+(user.settings.language==='fa'?CALCULATIONS_FA:user.settings.language==='de'?CALCULATIONS_DE:CALCULATIONS_EN),buttons);
     } else if (cmd==='/support') {
       if (!rest) await reply(id,'Send /support followed by your question. It is forwarded to the administrator; no AI charge. Response is manual.');
       else {
@@ -470,8 +573,9 @@ Deno.serve(async req => {
       const used=jobs.filter((j:any)=>j.usage?.shared_hit!==true&&(j.status!=='failed'||Number(j.charged_usd)>0)).length;
       await reply(id,adminUnlimited?`Administrator: no weekly report limit.\nReports this week: ${used}.\nMonthly spending cap and one active analysis at a time still apply.`:`Plan: ${user.plan}\nUsed: ${used} / ${user.plan==='paid'?7:1} this week. Reset Monday 00:00 Europe/Berlin.`);
     } else if (cmd==='/last') {
-      const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&status=eq.complete&order=finished_at.desc&limit=1&select=report');
-      await reply(id,jobs.length?jobs[0].report:'No completed report yet.');
+      const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&status=eq.complete&order=finished_at.desc&limit=1&select=id,report');
+      if(jobs.length) await sendReport(id,jobs[0].report,'j'+jobs[0].id,user.settings.language);
+      else await reply(id,'No completed report yet.');
     } else if (cmd==='/run'||cmd==='/saved'||cmd==='/refresh') {
       const refresh=cmd==='/refresh';
       if (refresh && id!==admin) { await reply(id,'Only the administrator can start additional paid research.'); return new Response('ok'); }
@@ -480,7 +584,7 @@ Deno.serve(async req => {
         const saved=await db('POST','rpc/bot_saved_report',{p_user:id});
         if (saved?.report) {
           await reply(id,'📂 Saved report for your current settings. No quota used and no new AI research.');
-          await reply(id,saved.report); return new Response('ok');
+          await sendReport(id,saved.report,'s'+await reportHash(saved.report),user.settings.language); return new Response('ok');
         }
       }
       if (cmd==='/saved') {

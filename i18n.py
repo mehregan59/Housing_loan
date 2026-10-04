@@ -45,6 +45,14 @@ FA = {
 '🔎 Research lead only; eligibility and financing are not verified.':'🔎 صرفاً سرنخ تحقیق است؛ انطباق با معیارها و تأمین مالی تأیید نشده است.',
 '⚠️ Partial research: only fully extracted, verified data was retained.\n\n':'⚠️ تحقیق ناقص؛ فقط داده‌های استخراج‌شده و تأییدشده حفظ شده است.\n\n',
 }
+FA.update({
+'Missing data':'اطلاعات ناقص','Missing data: rent, financing or owner costs':'اطلاعات ناقص: اجاره، تأمین مالی یا هزینه‌های مالک',
+'Not rated: incomplete data':'امتیاز محاسبه نشده؛ اطلاعات ناقص است',
+'No loan needed with your stated equity':'با آورده اعلام‌شده شما نیازی به وام نیست',
+'No mortgage payment needed':'نیازی به قسط وام نیست',
+'⚠️ Calculation unavailable — missing ':'⚠️ محاسبه ممکن نیست؛ اطلاعات ناقص: ',
+'. No loan or payment value is shown; financing is not confirmed.':'. عددی برای وام یا قسط نمایش داده نمی‌شود؛ تأمین مالی تأیید نشده است.',
+})
 def fa(text):
     if text in FA: return FA[text]
     patterns=[

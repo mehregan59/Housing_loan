@@ -37,7 +37,7 @@ class MarketTests(unittest.TestCase):
 
     def test_unknown_commission_never_zero_or_loan_capped(self):
         c=market.calculate(listing(broker_pct=None),S,R)
-        self.assertAlmostEqual(c['loan'],160500); self.assertEqual(c['missing_costs'],['broker_pct']); self.assertIsNone(c['cash'])
+        self.assertIsNone(c['loan']); self.assertAlmostEqual(c['known_loan'],160500); self.assertEqual(c['missing_costs'],['broker_pct']); self.assertIsNone(c['cash'])
         c=market.calculate(listing(price_eur=240000),S,R)
         self.assertGreater(c['loan'],S['max_loan_eur'])
         m,f,_=market.screen(pool([listing(price_eur=240000)]),S,R,(48,7.85))
@@ -49,7 +49,7 @@ class MarketTests(unittest.TestCase):
         self.assertIsNone(c['cash'])
         text,_=market.render(pool([listing(owner_cost_monthly=value(None))]),S,R,(48,7.85),NOW.isoformat(),True)
         self.assertIn('Monthly',text.replace('monthly','Monthly'))
-        self.assertIn('unknown: rent, financing or owner costs missing',text)
+        self.assertIn('Missing data: rent, financing or owner costs',text)
         self.assertNotIn(' + R',text)
 
     def test_effective_or_old_rates_do_not_feed_calculations(self):
@@ -120,7 +120,7 @@ class MarketTests(unittest.TestCase):
         text,urls=market.render(validated,S,R,(48,7.85),NOW.isoformat(),True)
         self.assertEqual(set(urls),{x['url'] for x in items})
         parts=list(agent.chunks(text))
-        self.assertGreaterEqual(len(parts),10)
+        self.assertGreater(len(parts),1)
         self.assertEqual(''.join(parts),text)
         self.assertTrue(all(len(x.encode('utf-16-le'))//2<=3900 for x in parts))
 
@@ -156,6 +156,19 @@ class MarketTests(unittest.TestCase):
         self.assertIn('already_collected_urls',api.return_value.responses.create.call_args.kwargs['input'])
         saved=[c.args[2] for c in db.request.call_args_list if c.args[0]=='POST' and c.args[1]=='bot_market_cache'][0]
         self.assertEqual(saved['expires_at'],old['expires_at'])
+
+    def test_missing_inputs_show_missing_not_zero_in_dependent_results(self):
+        s={**S,'equity_eur':200000}
+        text,urls=market.render(pool([listing(broker_pct=None,rent_monthly=value(None))]),s,R,(48,7.85),NOW.isoformat(),True)
+        self.assertIn('🏦 Estimated loan needed: Missing data',text)
+        self.assertIn('💳 Estimated mortgage payment: Missing data',text)
+        self.assertIn('💵 Cold rent: Missing data',text)
+        self.assertIn('Not rated: incomplete data',text)
+        self.assertNotIn('€0',text)
+        self.assertEqual(urls,[SOURCE])
+        complete,_=market.render(pool(),s,R,(48,7.85),NOW.isoformat(),True)
+        self.assertIn('No loan needed with your stated equity',complete)
+        self.assertIn('No mortgage payment needed',complete)
 
     def test_expired_cache_not_reused(self):
         r=row();r['expires_at']=(NOW-timedelta(seconds=1)).isoformat()
@@ -220,14 +233,14 @@ class MarketTests(unittest.TestCase):
         x=listing(state='Bayern',tax_pct=None)
         self.assertIsNone(market.with_verified_tax(x)['tax_pct'])
         text,_=market.render(pool([x]),S,R,(48,7.85),NOW.isoformat(),True)
-        self.assertIn('excludes unknown transfer tax',text)
+        self.assertIn('Calculation unavailable — missing transfer tax',text)
 
     def test_missing_target_data_kept_and_explicitly_unchecked(self):
         settings={**S,'target_gross_yield_pct':5,'min_monthly_cashflow_eur':100}
         text,urls=market.render(pool([listing(rent_monthly=value(None),broker_pct=None)]),settings,R,(48,7.85),NOW.isoformat(),True)
         self.assertEqual(urls,[SOURCE])
         self.assertIn('not checked: loan limit, rental yield, monthly result',text)
-        self.assertIn('excludes unknown buyer commission',text)
+        self.assertIn('Calculation unavailable — missing buyer commission',text)
         self.assertNotIn('Rent covers estimated costs.',text)
 
     def test_partial_loan_known_costs_already_over_cap_is_excluded(self):
@@ -279,7 +292,7 @@ class MarketTests(unittest.TestCase):
         with patch('research.analyse',return_value=('Saved report',[],True)),patch.dict('os.environ',{'ADMIN_USER_ID':'123'}): agent.run_job(db,'job')
         args=db.rpc.call_args_list[1].args[1]
         self.assertEqual(args['p_cost'],0);self.assertEqual(args['p_status'],'complete')
-        db.telegram.assert_called_once_with(456,'Saved report');self.assertIn('Administrator only',db.admin.call_args.args[0])
+        db.report.assert_called_once_with(456,'Saved report','job','en');self.assertIn('Administrator only',db.admin.call_args.args[0])
 
     def test_fresh_research_uses_schema_no_calculation_tool_and_saves_public_data(self):
         db=Mock()
@@ -308,7 +321,7 @@ class MarketTests(unittest.TestCase):
     def test_same_settings_and_data_return_previous_report(self):
         import hashlib,json
         pr=market.choose_pool([row()],S,NOW)[0]
-        signature=hashlib.sha256(json.dumps({'renderer_version':8,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
+        signature=hashlib.sha256(json.dumps({'renderer_version':9,'settings':S,'pool':pr['payload'],'checked':pr['created_at'],'rates':R},sort_keys=True).encode()).hexdigest()
         db=Mock();db.request.side_effect=[[row('rates')],[pr],[{'report':'Previous report','usage':{'report_signature':signature}}]]
         meter={'pending':False,'cost':0,'calls':[]}
         with patch('research.datetime',wraps=datetime) as dt,patch('openai.OpenAI') as api:

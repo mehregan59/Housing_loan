@@ -4,7 +4,7 @@ let handler;
 const env={TELEGRAM_WEBHOOK_SECRET:'test-secret',ADMIN_USER_ID:'123',SUPABASE_URL:'https://db.test',
   BOT_DATABASE_KEY:'fake-key',TELEGRAM_BOT_TOKEN:'fake-token'};
 globalThis.Deno={env:{get(k){return env[k];}},serve(fn){handler=fn;}};
-const {parseEdit,settingsSummary}=await import('../supabase/functions/telegram/index.ts');
+const {parseEdit,settingsSummary,splitReport,reportPage}=await import('../supabase/functions/telegram/index.ts');
 assert.equal(parseEdit('max_price_eur','€250,000'),250000);
 assert.equal(parseEdit('max_loan_eur','250.000'),250000);
 assert.equal(parseEdit('equity_eur','0'),0);
@@ -228,3 +228,53 @@ await sendAs(123,'/refresh');
 assert.equal(refreshRequests,1);
 assert.match(messages.at(-1).text,/MonthlyBudgetExceeded/);
 console.log('Persian settings/help and administrator refresh budget gate passed');
+
+// The Python worker and webhook must show identical report indices.
+const {readFileSync}=await import('node:fs');
+const {execFileSync}=await import('node:child_process');
+const cases=JSON.parse(execFileSync('python',['-c',`import json,sys
+from report_pages import split_report,page
+cases=json.load(sys.stdin)
+for c in cases:
+ v=split_report(c['report']);c['view']=v
+ c['pages']=[{'text':page(v,'j00000000-0000-4000-8000-000000000001',i,c['language'])[0],'keyboard':page(v,'j00000000-0000-4000-8000-000000000001',i,c['language'])[1]} for i in range(2)]
+print(json.dumps(cases))`],{input:readFileSync('tests/fixtures/report_views.json','utf8'),encoding:'utf8'}));
+const reportJob='00000000-0000-4000-8000-000000000001';
+for(const c of cases) {
+  const view=splitReport(c.report);
+  assert.deepEqual(view,c.view);
+  for(let i=0;i<c.pages.length;i++) assert.deepEqual(reportPage(view,'j'+reportJob,i,c.language),c.pages[i]);
+}
+const navigationFetch=globalThis.fetch;
+const edited=[];
+globalThis.fetch=async(address,options={})=>{
+  if(address.includes('/editMessageText')) {edited.push(JSON.parse(options.body));return Response.json({ok:true});}
+  if(address.includes('/rest/v1/bot_jobs?')) {
+    const q=new URL(address).searchParams;
+    assert.equal(q.get('user_id'),'eq.456','Details must be scoped to requesting user');
+    assert.equal(q.get('status'),'eq.complete');
+    return Response.json(q.get('id')==='eq.'+reportJob?[{report:cases[0].report}]:[]);
+  }
+  if(address.includes('/rpc/bot_saved_report')) return Response.json({report:cases[0].report});
+  return navigationFetch(address,options);
+};
+async function navigate(data) {
+  const body={callback_query:{id:'nav',from:{id:456},message:{message_id:100,chat:{id:456,type:'private'}},data}};
+  const r=await handler(new Request('https://webhook.test',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':'test-secret'},body:JSON.stringify(body)}));
+  assert.equal(r.status,200);
+}
+await navigate('prop:j'+reportJob+':6');
+assert.match(edited.at(-1).text,/Apartment 6/);
+assert.match(edited.at(-1).text,/Owner building fees/);
+assert.equal(edited.at(-1).reply_markup.inline_keyboard[0][0].callback_data,'list:j'+reportJob+':0');
+await navigate('list:j'+reportJob+':0');assert.match(edited.at(-1).text,/Page 1\/2/);
+await navigate('notes:j'+reportJob);assert.match(edited.at(-1).text,/MORTGAGE RATES/);
+const editedBefore=edited.length;
+await navigate('prop:j00000000-0000-4000-8000-000000000002:0');
+assert.equal(edited.length,editedBefore);assert.match(messages.at(-1).text,/no longer available/);
+const {createHash}=await import('node:crypto');
+const savedHash=createHash('sha256').update(cases[0].report).digest('hex').slice(0,12);
+await navigate('prop:s'+savedHash+':0');assert.match(edited.at(-1).text,/Apartment 0/);
+await navigate('prop:s000000000000:0');assert.match(messages.at(-1).text,/no longer available/);
+assert.equal(queueCalls,0,'Navigation never queues paid work');
+console.log('Summary parity, private detail navigation, back button, notes and stale saved links passed');

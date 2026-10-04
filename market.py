@@ -214,16 +214,17 @@ def calculate(x,s,rates):
     midpoint=(min(r)+max(r))/2 if r else None
     stress=max(r)+1 if r else None
     missing_costs=[field for field in ('tax_pct','broker_pct') if x[field] is None]
-    loan=max(0,x['price_eur']*(1+(2+sum(x[field] for field in ('tax_pct','broker_pct') if x[field] is not None))/100)-s['equity_eur'])
-    pay=None if loan is None or midpoint is None else loan*(midpoint+s['repayment_pct'])/1200
-    stressed=None if loan is None or stress is None else loan*(stress+s['repayment_pct'])/1200
+    known_loan=max(0,x['price_eur']*(1+(2+sum(x[field] for field in ('tax_pct','broker_pct') if x[field] is not None))/100)-s['equity_eur'])
+    loan=None if missing_costs else known_loan
+    pay=0 if loan==0 else None if loan is None or midpoint is None else loan*(midpoint+s['repayment_pct'])/1200
+    stressed=0 if loan==0 else None if loan is None or stress is None else loan*(stress+s['repayment_pct'])/1200
     rent=x['rent_monthly']['value']; owner=x['owner_cost_monthly']['value']
     yield_pct=None if rent is None else rent*1200/x['price_eur']
     cash=None if rent is None or owner is None or pay is None else rent-pay-owner-x['size_m2']
     stress_cash=None if cash is None else rent-stressed-owner-x['size_m2']
     partial_cash=cash; partial_stress_cash=stress_cash
     if missing_costs: cash=stress_cash=None
-    return {'loan':loan,'payment':pay,'stress_payment':stressed,'yield':yield_pct,'cash':cash,'stress_cash':stress_cash,'ppm':x['price_eur']/x['size_m2'],'missing_costs':missing_costs,'partial_cash':partial_cash,'partial_stress_cash':partial_stress_cash}
+    return {'loan':loan,'payment':pay,'stress_payment':stressed,'yield':yield_pct,'cash':cash,'stress_cash':stress_cash,'ppm':x['price_eur']/x['size_m2'],'known_loan':known_loan,'missing_costs':missing_costs,'partial_cash':partial_cash,'partial_stress_cash':partial_stress_cash}
 
 
 def screen(pool,s,rates,center):
@@ -247,7 +248,7 @@ def screen(pool,s,rates,center):
         checks=[('max_price_eur',x['price_eur'],s['max_price_eur'],False,1.10),
                 ('min_size_m2',x['size_m2'],s['min_size_m2'],True,.90),
                 ('radius_km',d,s['radius_km'],False,1.10),
-                ('max_loan_eur',c['loan'],s['max_loan_eur'],False,1.10),
+                ('max_loan_eur',c['known_loan'],s['max_loan_eur'],False,1.10),
                 ('max_price_per_m2',c['ppm'],s.get('max_price_per_m2'),False,1.10),
                 ('target_gross_yield_pct',c['yield'],s.get('target_gross_yield_pct'),True,.90),
                 ('min_monthly_cashflow_eur',c['cash'],s.get('min_monthly_cashflow_eur'),True,None)]
@@ -289,9 +290,9 @@ def render(pool,s,rates,center,checked_at,cache_hit):
             'tenure':t('ownership type','Eigentumsart'),'auction':t('auction status','Auktionsstatus'),
             'location unverified':t('location unverified','Standort ungeprüft'),
             'unverified tenure/auction status':t('ownership or auction status unknown','Eigentums- oder Auktionsstatus unbekannt')}
-    def money(v): return t('unknown','unbekannt') if v is None else f'€{v:,.0f}'
+    def money(v): return t('Missing data','Fehlende Daten') if v is None else f'€{v:,.0f}'
     def result(v):
-        if v is None: return t('unknown: rent, financing or owner costs missing','unbekannt: Miete, Finanzierung oder Eigentümerkosten fehlen')
+        if v is None: return t('Missing data: rent, financing or owner costs','Fehlende Daten: Miete, Finanzierung oder Eigentümerkosten')
         return money(abs(v))+t('/month '+('left' if v>=0 else 'extra needed'),'/Monat '+('übrig' if v>=0 else 'zuzuzahlen'))
     m,f,blockers=screen(pool,s,rates,center)
     lines=[t('🏠 Apartment screening','🏠 Wohnungssuche')+' — '+s['location'],
@@ -308,29 +309,25 @@ def render(pool,s,rates,center,checked_at,cache_hit):
         owner_kind=t(x['owner_cost_monthly']['kind'],{'actual':'angegeben','estimate':'geschätzt','unknown':'unbekannt'}[x['owner_cost_monthly']['kind']])
         out=[title+' — '+x['title'][:90],
              '📍 '+x['town']+', '+x['state']+ (' · ~'+f'{item["distance"]:.1f} km '+t('from ','von ')+s['location'] if item['distance'] is not None else t(' · distance unverified',' · Entfernung ungeprüft')),
-             t('📈 Gross rental yield: ','📈 Bruttomietrendite: ')+(f'{c["yield"]:.2f}%' if c['yield'] is not None else t('unknown','unbekannt'))+t(' before costs',' vor Kosten'),
-             t('🏦 Estimated loan needed: ','🏦 Geschätzter Kreditbedarf: ')+money(c['loan']),
-             t('💵 Cold rent: ','💵 Kaltmiete: ')+money(x['rent_monthly']['value'])+t('/month','/Monat')+' · '+rent_kind,
+             t('📈 Gross rental yield: ','📈 Bruttomietrendite: ')+(f'{c["yield"]:.2f}%' if c['yield'] is not None else t('Missing data','Fehlende Daten'))+(t(' before costs',' vor Kosten') if c['yield'] is not None else ''),
+             t('🏦 Estimated loan needed: ','🏦 Geschätzter Kreditbedarf: ')+(t('No loan needed with your stated equity','Mit Ihrem angegebenen Eigenkapital kein Kredit nötig') if c['loan']==0 else money(c['loan'])),
+             t('💵 Cold rent: ','💵 Kaltmiete: ')+money(x['rent_monthly']['value'])+(t('/month','/Monat')+' · '+rent_kind if x['rent_monthly']['value'] is not None else ''),
              t('🗓 Annual rental income: ','🗓 Jährliche Mieteinnahmen: ')+money(None if x['rent_monthly']['value'] is None else x['rent_monthly']['value']*12)+t(' before costs',' vor Kosten'),
              t('🏷 Purchase price: ','🏷 Kaufpreis: ')+money(x['price_eur']),
              f'📐 {x["size_m2"]:g} m² · {money(c["ppm"])}/m²',
-             t('💳 Estimated mortgage payment: ','💳 Geschätzte Kreditrate: ')+money(c['payment'])+t('/month','/Monat'),
+             t('💳 Estimated mortgage payment: ','💳 Geschätzte Kreditrate: ')+(t('No mortgage payment needed','Keine Kreditrate nötig') if c['payment']==0 else money(c['payment'])+(t('/month','/Monat') if c['payment'] is not None else '')),
              t('💰 Estimated monthly result: ','💰 Geschätztes Monatsergebnis: ')+result(c['cash']),
              t('🌧 If interest rates rise: ','🌧 Bei höheren Zinsen: ')+result(c['stress_cash']),
-             t('🏢 Owner building fees: ','🏢 Eigentümerkosten: ')+money(x['owner_cost_monthly']['value'])+t('/month','/Monat')+' · '+owner_kind+t(' (reserve contributions excluded)',' (ohne Rücklagen)'),
+             t('🏢 Owner building fees: ','🏢 Eigentümerkosten: ')+money(x['owner_cost_monthly']['value'])+(t('/month','/Monat')+' · '+owner_kind+t(' (reserve contributions excluded)',' (ohne Rücklagen)') if x['owner_cost_monthly']['value'] is not None else ''),
              t('🛠 Maintenance allowance: ','🛠 Instandhaltungsansatz: ')+money(x['size_m2'])+t('/month','/Monat'),
              t('🏗 Built: ','🏗 Baujahr: ')+(f'{x["year_built"]:.0f}' if x['year_built'] is not None else t('unknown','unbekannt'))+' · '+t('Energy: ','Energieklasse: ')+(x['energy_class'] or t('unknown','unbekannt')),
-             t('⭐ Screening score: ','⭐ Suchbewertung: ')+f'{item["score"]}/10',
+             t('⭐ Screening score: ','⭐ Suchbewertung: ')+(f'{item["score"]}/10' if c['yield'] is not None and c['cash'] is not None else t('Not rated: incomplete data','Nicht bewertet: Daten unvollständig')),
              t('💬 Verdict: ','💬 Einschätzung: ')+t('Rent covers estimated costs.' if not item['checks_pending'] and c['cash'] is not None and c['cash']>=0 else 'Needs extra money or cost clarification.','Miete deckt geschätzte Kosten.' if not item['checks_pending'] and c['cash'] is not None and c['cash']>=0 else 'Zuzahlung oder Kostenklärung nötig.')]
         if item['checks_pending']:
             out.append(t('⚠️ Provisional candidate — not checked: ','⚠️ Vorläufiges Angebot — nicht geprüft: ')+', '.join(labels[k] for k in item['checks_pending'])+t('. Confirm missing details with the seller; your exclusions still apply.','. Fehlende Angaben beim Verkäufer prüfen; Ihre Ausschlüsse gelten weiterhin.'))
         if c['missing_costs']:
-            if c['partial_cash'] is not None: out.append(t('🔎 Monthly subtotal before missing purchase costs: ','🔎 Monatlicher Zwischenstand vor fehlenden Kaufkosten: ')+result(c['partial_cash']))
             names={'tax_pct':t('transfer tax','Grunderwerbsteuer'),'broker_pct':t('buyer commission','Käuferprovision')}
-            out.append(t('⚠️ Partial calculation excludes unknown ','⚠️ Teilberechnung ohne unbekannte ')+', '.join(names[k] for k in c['missing_costs'])+t('. Loan and payments may be higher; financing is not confirmed.','. Kredit und Raten können höher sein; Finanzierung nicht bestätigt.'))
-        if x['owner_cost_monthly']['value'] is None and x['rent_monthly']['value'] is not None and c['payment'] is not None:
-            partial=x['rent_monthly']['value']-c['payment']-x['size_m2']
-            out.append(t('🔎 Before unknown owner fees: ','🔎 Vor unbekannten Eigentümerkosten: ')+result(partial)+t(' (maintenance already included; final result unknown).',' (Instandhaltung bereits enthalten; Endergebnis unbekannt).'))
+            out.append(t('⚠️ Calculation unavailable — missing ','⚠️ Berechnung nicht möglich — fehlende ')+', '.join(names[k] for k in c['missing_costs'])+t('. No loan or payment value is shown; financing is not confirmed.','. Kein Kredit- oder Ratenwert angezeigt; Finanzierung nicht bestätigt.'))
         if x['tax_pct'] is not None and x['broker_pct'] is not None:
             out.append(t('🧾 Purchase costs used: ','🧾 Angesetzte Kaufnebenkosten: ')+f'{x["tax_pct"]:g}% '+t('transfer tax','Grunderwerbsteuer')+f' + ~2% '+t('notary/registry','Notar/Grundbuch')+f' + {x["broker_pct"]:g}% '+t('buyer commission','Käuferprovision'))
         if x.get('tax_lookup'): out.append(t('Transfer tax: official state rate, verified 2026-10-04. ','Grunderwerbsteuer: amtlicher Landessatz, geprüft am 04.10.2026. ')+x['tax_source_url'])

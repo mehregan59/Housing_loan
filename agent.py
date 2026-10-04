@@ -122,13 +122,22 @@ class Backend:
     def rpc(self, name, data):
         return self.request('POST', 'rpc/'+name, data)
 
-    def telegram(self, user, text):
+    def telegram(self, user, text, keyboard=None):
         for index,part in enumerate(chunks(text)):
             if index: time.sleep(1.1)
             r = self.http.post('https://api.telegram.org/bot'+os.environ['TELEGRAM_BOT_TOKEN']+'/sendMessage',
-                json={'chat_id': user, 'text': part, 'link_preview_options': {'is_disabled': True}})
+                json={'chat_id': user, 'text': part, 'link_preview_options': {'is_disabled': True},**({'reply_markup':keyboard} if keyboard and index==0 else {})})
             if not r.is_success or not r.json().get('ok'):
                 raise RuntimeError('Telegram delivery failed')
+
+    def report(self, user, text, job_id, language='en'):
+        from report_pages import split_report,page,PAGE_SIZE
+        view=split_report(text)
+        if not view['cards']: return self.telegram(user,text)
+        for index in range((len(view['cards'])+PAGE_SIZE-1)//PAGE_SIZE):
+            if index: time.sleep(1.1)
+            summary,keyboard=page(view,'j'+job_id,index,language)
+            self.telegram(user,summary,keyboard)
 
     def admin(self, text):
         self.telegram(os.environ['ADMIN_USER_ID'], text)
@@ -199,7 +208,7 @@ def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
         'p_error':error, 'p_urls':urls if status=='complete' else []})
     if status == 'complete':
         try:
-            db.telegram(job['user_id'], report)
+            db.report(job['user_id'], report,job_id,job['settings'].get('language','en'))
             db.request('PATCH', 'bot_jobs?id=eq.'+job_id, {'delivered':True})
             control = db.request('GET','bot_control?id=eq.1')[0]
             if control['channel_enabled'] and str(job['user_id']) == os.environ['ADMIN_USER_ID'] and os.getenv('CHANNEL_ID'):
