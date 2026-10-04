@@ -51,7 +51,7 @@ const CALCULATIONS_EN=`🧮 How the estimates work
 🌧 Stress payment uses the highest sourced rate + 1 percentage point, with the same repayment. It is a scenario, not an increase during a contractual fixed-rate period.
 📐 Price per m² = purchase price ÷ apartment size.
 Missing required inputs → “Missing data”, not zero. Other available criteria can still be checked; open Details for unchecked limits. A verified state tax rate may fill a missing tax field. Estimates must name their source/basis.
-Income tax, vacancy, letting costs and major unexpected repairs are excluded. Scores are a screening rubric, not predictions; incomplete rent/cashflow data is not rated. Rates & assumptions opens the report sources. Apartment buttons open saved details; Back to list returns to the overview without a new AI call.`;
+Income tax, vacancy, letting costs and major unexpected repairs are excluded. Scores are a screening rubric, not predictions; incomplete rent/cashflow data is not rated. Rates & assumptions opens the report sources. Apartment links open saved details; Back to list returns to the overview without a new AI call.`;
 const CALCULATIONS_FA=`🧮 روش محاسبه برآوردها
 📈 بازده ناخالص اجاره (%) = اجاره خالص ماهانه × ۱۲ ÷ قیمت خرید × ۱۰۰. این درآمد پیش از هزینه‌هاست، نه سود خالص.
 🏦 وام مورد نیاز = قیمت خرید + مالیات انتقال ملک ایالت + حدود ۲٪ دفتر اسناد و ثبت ملک + کمیسیون خریدار − آورده نقدی. نتیجه کمتر از صفر نمی‌شود. صفر یعنی آورده اعلام‌شده هزینه خرید را پوشش می‌دهد؛ تأیید وام از بانک نیست.
@@ -60,7 +60,7 @@ const CALCULATIONS_FA=`🧮 روش محاسبه برآوردها
 🌧 سناریوی فشار: بالاترین نرخ منبع + یک واحد درصد، با همان بازپرداخت. این به معنی تغییر نرخ در دوره ثابت قراردادی نیست.
 📐 قیمت هر متر مربع = قیمت خرید ÷ مساحت.
 اگر ورودی لازم موجود نباشد، «اطلاعات ناقص» نمایش داده می‌شود، نه صفر. بقیه معیارهای موجود بررسی می‌شوند؛ موارد بررسی‌نشده در جزئیات مشخص است. نرخ رسمی مالیات ایالت می‌تواند جای اطلاعات مالیاتی ناقص را بگیرد. برآوردها باید منبع و مبنای مشخص داشته باشند.
-مالیات درآمد، دوره بدون مستأجر، هزینه اجاره دادن و تعمیرات عمده غیرمنتظره لحاظ نشده است. امتیازها پیش‌بینی نیستند؛ با اطلاعات ناقص اجاره یا جریان نقدی امتیاز داده نمی‌شود. دکمه جزئیات اطلاعات ذخیره‌شده را باز می‌کند؛ بازگشت به فهرست هیچ درخواست جدید هوش مصنوعی ندارد.`;
+مالیات درآمد، دوره بدون مستأجر، هزینه اجاره دادن و تعمیرات عمده غیرمنتظره لحاظ نشده است. امتیازها پیش‌بینی نیستند؛ با اطلاعات ناقص اجاره یا جریان نقدی امتیاز داده نمی‌شود. پیوند جزئیات اطلاعات ذخیره‌شده را باز می‌کند؛ بازگشت به فهرست هیچ درخواست جدید هوش مصنوعی ندارد.`;
 const CALCULATIONS_DE=`🧮 Berechnung der Schätzungen
 Bruttomietrendite (%) = monatliche Kaltmiete × 12 ÷ Kaufpreis × 100; vor Kosten, kein Gewinn.
 Kreditbedarf = Kaufpreis + Grunderwerbsteuer des Landes + ca. 2% Notar/Grundbuch + Käuferprovision − Eigenkapital, mindestens null. Null bedeutet ausreichendes angegebenes Eigenkapital, keine Bankzusage.
@@ -201,8 +201,8 @@ async function tg(method: string, body: unknown) {
   });
   if (!r.ok || !(await r.json()).ok) throw new Error('Telegram operation failed');
 }
-async function reply(id: number, text: string, keyboard?: unknown) {
-  let first = true;
+async function reply(id: number, text: string, keyboard?: unknown, entities?: any[]) {
+  let first = true;let offset=0;
   while (text.length) {
     let cut = Math.min(text.length,3800);
     // JavaScript counts UTF-16 units: never cut between an emoji's surrogates.
@@ -212,9 +212,10 @@ async function reply(id: number, text: string, keyboard?: unknown) {
       const boundary = text.lastIndexOf('\n',cut-1);
       if (boundary >= Math.floor(cut/2)) cut = boundary+1;
     }
+    const local=(entities||[]).flatMap(e=>{const start=Math.max(offset,e.offset),end=Math.min(offset+cut,e.offset+e.length);return start<end?[{...e,offset:start-offset,length:end-start}]:[];});
     await tg('sendMessage',{chat_id:id,text:text.slice(0,cut),link_preview_options:{is_disabled:true},
-      ...(keyboard && first ? {reply_markup:keyboard} : {})});
-    first = false;
+      ...(keyboard && first ? {reply_markup:keyboard} : {}),...(local.length?{entities:local}:{})});
+    offset+=cut;first = false;
     text = text.slice(cut);
   }
 }
@@ -238,23 +239,33 @@ export function splitReport(report:string) {
 function reportLabels(language:string) {
   return language==='fa'?['جزئیات','آگهی','نرخ بهره و فرض‌ها','صفحه','⬆️ بازگشت به فهرست']:language==='de'?['Details','Anzeige','Zinsen & Annahmen','Seite','⬆️ Zurück zur Liste']:['Details','Listing','Rates & assumptions','Page','⬆️ Back to list'];
 }
+function reportLink(source:string,kind:string,index?:number) {
+  const username=Deno.env.get('TELEGRAM_BOT_USERNAME')||'MeHousingLoanBot';
+  const payload=kind+'_'+source+(index===undefined?'':'_'+index);
+  if(!/^[A-Za-z0-9_]+$/.test(username)||payload.length>64||!/^[A-Za-z0-9_-]+$/.test(payload)) throw new Error('Invalid report link');
+  return 'https://t.me/'+username+'?start='+payload;
+}
+function addReportLink(text:string,entities:any[],label:string,url:string) {
+  entities.push({type:'text_link',offset:text.length,length:label.length,url});
+  return text+label;
+}
 export function reportPage(view:ReturnType<typeof splitReport>,source:string,index:number,language:string) {
   const [details,listing,notes,pageLabel]=reportLabels(language);
   const total=Math.ceil(view.cards.length/5);
   if(!Number.isSafeInteger(index)||index<0||index>=total) throw new Error('Invalid report page');
-  const text=[view.header,`${pageLabel} ${index+1}/${total}`];
-  const rows:any[][]=[];
+  let text=view.header+'\n'+`${pageLabel} ${index+1}/${total}`;
+  const entities:any[]=[];
   for(let i=index*5;i<Math.min((index+1)*5,view.cards.length);i++) {
-    const card=view.cards[i];text.push(`\n${i+1}. `+card.brief.replace(/^🏠 — /,''));
-    rows.push([{text:`${details} ${i+1}`,callback_data:`prop:${source}:${i}`},{text:'🔗 '+listing,url:card.url}]);
+    const card=view.cards[i];text+=`\n\n${i+1}. `+card.brief.replace(/^🏠 — /,'')+' · ';
+    text=addReportLink(text,entities,details,reportLink(source,'prop',i))+' · ';
+    text=addReportLink(text,entities,listing,card.url);
   }
-  if(view.notes) text.push('\n'+view.notes.split('\n').at(-1));
-  const nav=[];
-  if(index) nav.push({text:'◀️',callback_data:`list:${source}:${index-1}`});
-  if(index+1<total) nav.push({text:'▶️',callback_data:`list:${source}:${index+1}`});
-  if(nav.length) rows.push(nav);
-  if(view.notes) rows.push([{text:'💶 '+notes,callback_data:`notes:${source}`}]);
-  return {text:text.join('\n'),keyboard:{inline_keyboard:rows}};
+  text+='\n\n';
+  if(index) text=addReportLink(text,entities,'◀️',reportLink(source,'list',index-1))+'  ';
+  if(index+1<total) text=addReportLink(text,entities,'▶️',reportLink(source,'list',index+1))+'  ';
+  if(view.notes) text=addReportLink(text,entities,'💶 '+notes,reportLink(source,'notes'));
+  if(view.notes) text+='\n\n'+view.notes.split('\n').at(-1);
+  return {text,entities};
 }
 async function reportHash(report:string) {
   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(report));
@@ -265,7 +276,8 @@ async function sendReport(id:number,report:string,source:string,language:string)
   if(!view.cards.length) return reply(id,report);
   for(let i=0;i<Math.ceil(view.cards.length/5);i++) {
     const page=reportPage(view,source,i,language);
-    await reply(id,page.text,page.keyboard);
+    if(i) await new Promise(resolve=>setTimeout(resolve,1100));
+    await reply(id,page.text,undefined,page.entities);
   }
 }
 
@@ -298,7 +310,11 @@ Deno.serve(async req => {
     replyTo=id;
     if (cb) await tg('answerCallbackQuery',{callback_query_id:cb.id});
     const admin = Number(env('ADMIN_USER_ID'));
-    const action=cb?String(cb.data):'';
+    let action=cb?String(cb.data):'';
+    if(!cb) {
+      const deep=/^\/start(?:@[A-Za-z0-9_]+)?\s+(prop|list|notes)_((?:j[0-9a-f-]{36}|s[0-9a-f]{12}))(?:_(\d+))?$/.exec(String(message.text||''));
+      if(deep) action=deep[1]+':'+deep[2]+(deep[3]===undefined?'':':'+deep[3]);
+    }
     let rows = await db('GET','bot_users?user_id=eq.'+id);
     if (!rows.length && id===admin) rows = await db('POST','bot_users',{user_id:id,approved:true});
     // Only the configured private administrator can bind the database quota exemption.
@@ -389,17 +405,18 @@ Deno.serve(async req => {
       }
       if(!report) { await reply(id,'This report is no longer available. Use /last or /saved.'); return new Response('ok'); }
       const view=splitReport(report);const index=Number(rawIndex);
-      let display:string;let keyboard:unknown;
-      if(kind==='list') { const page=reportPage(view,source,index,user.settings.language);display=page.text;keyboard=page.keyboard; }
+      let display:string;let displayEntities:any[]=[];
+      if(kind==='list') { const page=reportPage(view,source,index,user.settings.language);display=page.text;displayEntities=page.entities; }
       else {
         if(kind==='prop'&&(!Number.isSafeInteger(index)||index<0||index>=view.cards.length)) throw new Error('Invalid apartment');
         display=kind==='notes'?view.notes:view.cards[index].detail;
         if(kind==='prop'&&view.notes) display+='\n\n'+view.notes.split('\n').at(-1);
-        keyboard={inline_keyboard:[[{text:reportLabels(user.settings.language)[4],callback_data:'list:'+source+':0'}]]};
+        display+='\n\n';
+        display=addReportLink(display,displayEntities,reportLabels(user.settings.language)[4],reportLink(source,'list',0));
       }
       if(message.text===display) return new Response('ok');
-      if(display.length<=3800&&message.message_id) await tg('editMessageText',{chat_id:id,message_id:message.message_id,text:display,reply_markup:keyboard,link_preview_options:{is_disabled:true}});
-      else await reply(id,display,keyboard);
+      if(cb&&display.length<=3800&&message.message_id) await tg('editMessageText',{chat_id:id,message_id:message.message_id,text:display,entities:displayEntities,reply_markup:{inline_keyboard:[]},link_preview_options:{is_disabled:true}});
+      else await reply(id,display,undefined,displayEntities);
       return new Response('ok');
     }
     if (user.accepted_at && (cmd==='/cancel'||action==='cancel')) {

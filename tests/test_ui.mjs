@@ -237,7 +237,7 @@ from report_pages import split_report,page
 cases=json.load(sys.stdin)
 for c in cases:
  v=split_report(c['report']);c['view']=v
- c['pages']=[{'text':page(v,'j00000000-0000-4000-8000-000000000001',i,c['language'])[0],'keyboard':page(v,'j00000000-0000-4000-8000-000000000001',i,c['language'])[1]} for i in range(2)]
+ c['pages']=[{'text':page(v,'j00000000-0000-4000-8000-000000000001',i,c['language'])[0],'entities':page(v,'j00000000-0000-4000-8000-000000000001',i,c['language'])[1]} for i in range(2)]
 print(json.dumps(cases))`],{input:readFileSync('tests/fixtures/report_views.json','utf8'),encoding:'utf8'}));
 const reportJob='00000000-0000-4000-8000-000000000001';
 for(const c of cases) {
@@ -266,7 +266,8 @@ async function navigate(data) {
 await navigate('prop:j'+reportJob+':6');
 assert.match(edited.at(-1).text,/Apartment 6/);
 assert.match(edited.at(-1).text,/Owner building fees/);
-assert.equal(edited.at(-1).reply_markup.inline_keyboard[0][0].callback_data,'list:j'+reportJob+':0');
+assert.equal(edited.at(-1).entities.at(-1).url,'https://t.me/MeHousingLoanBot?start=list_j'+reportJob+'_0');
+assert.deepEqual(edited.at(-1).reply_markup.inline_keyboard,[]);
 await navigate('list:j'+reportJob+':0');assert.match(edited.at(-1).text,/Page 1\/2/);
 await navigate('notes:j'+reportJob);assert.match(edited.at(-1).text,/MORTGAGE RATES/);
 const editedBefore=edited.length;
@@ -278,3 +279,19 @@ await navigate('prop:s'+savedHash+':0');assert.match(edited.at(-1).text,/Apartme
 await navigate('prop:s000000000000:0');assert.match(messages.at(-1).text,/no longer available/);
 assert.equal(queueCalls,0,'Navigation never queues paid work');
 console.log('Summary parity, private detail navigation, back button, notes and stale saved links passed');
+
+// Text links enter via /start payload, with the same private access checks.
+const beforeDeepLink=edited.length;
+await sendAs(456,'/start prop_j'+reportJob+'_6');
+assert.match(messages.at(-1).text,/Apartment 6/);
+assert.equal(edited.length,beforeDeepLink,'Never edit a user /start message');
+assert.equal(messages.at(-1).entities.at(-1).url,'https://t.me/MeHousingLoanBot?start=list_j'+reportJob+'_0');
+assert.equal(messages.at(-1).reply_markup,undefined,'No table of buttons below details');
+await sendAs(456,'/start list_j'+reportJob+'_0');
+assert.match(messages.at(-1).text,/Gross rental yield:[^\n]+ · Details · Listing/);
+assert.ok(messages.at(-1).entities.some(e=>e.url.includes('prop_j')));
+assert.equal(messages.at(-1).reply_markup,undefined);
+await sendAs(456,'/start prop_j00000000-0000-4000-8000-000000000002_0');
+assert.match(messages.at(-1).text,/no longer available/);
+assert.equal(queueCalls,0);
+console.log('Inline text links, deep-link details/back navigation and owner access checks passed');

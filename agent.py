@@ -138,13 +138,20 @@ class Backend:
     def rpc(self, name, data):
         return self.request('POST', 'rpc/'+name, data)
 
-    def telegram(self, user, text, keyboard=None):
+    def telegram(self, user, text, keyboard=None, entities=None):
+        offset=0
         for index,part in enumerate(chunks(text)):
+            units=len(part.encode('utf-16-le'))//2
+            local_entities=[]
+            for entity in entities or []:
+                start=max(offset,entity['offset']);end=min(offset+units,entity['offset']+entity['length'])
+                if start<end: local_entities.append({**entity,'offset':start-offset,'length':end-start})
             if index: time.sleep(1.1)
             r = self.http.post('https://api.telegram.org/bot'+os.environ['TELEGRAM_BOT_TOKEN']+'/sendMessage',
-                json={'chat_id': user, 'text': part, 'link_preview_options': {'is_disabled': True},**({'reply_markup':keyboard} if keyboard and index==0 else {})})
+                json={'chat_id': user, 'text': part, 'link_preview_options': {'is_disabled': True},**({'reply_markup':keyboard} if keyboard and index==0 else {}),**({'entities':local_entities} if local_entities else {})})
             if not r.is_success or not r.json().get('ok'):
                 raise RuntimeError('Telegram delivery failed')
+            offset+=units
 
     def report(self, user, text, job_id, language='en'):
         from report_pages import split_report,page,PAGE_SIZE
@@ -152,8 +159,8 @@ class Backend:
         if not view['cards']: return self.telegram(user,text)
         for index in range((len(view['cards'])+PAGE_SIZE-1)//PAGE_SIZE):
             if index: time.sleep(1.1)
-            summary,keyboard=page(view,'j'+job_id,index,language)
-            self.telegram(user,summary,keyboard)
+            summary,entities=page(view,'j'+job_id,index,language,os.getenv('TELEGRAM_BOT_USERNAME','MeHousingLoanBot'))
+            self.telegram(user,summary,entities=entities)
 
     def admin(self, text):
         self.telegram(os.environ['ADMIN_USER_ID'], text)
