@@ -357,3 +357,25 @@ await paymentUpdate({message:{chat:{id:321,type:'private'},from:{id:321},success
 assert.equal(paymentCalls.length,count+1,'Duplicate payment must not send or dispatch again');
 assert.ok(paymentCalls.at(-1).url.endsWith('/rpc/bot_order_paid'));
 console.log('Stars checkout, wrong-price rejection and duplicate payment routing passed');
+
+// Separate rental settings remain editable while investment pilot is locked.
+let renter={user_id:456,approved:true,accepted_at:'2026-10-05',service:'rental',service_selected:true,pilot_free:true,
+  settings:{_guide_version:1,language:'en',location:'Freiburg',max_price_eur:300000},rental_settings:{location:'Freiburg',radius_km:25,max_rent_eur:1000},rental_daily:false};
+globalThis.fetch=async(url,options={})=>{
+  if(url.startsWith('https://api.telegram.org/')) { if(url.endsWith('/sendMessage')) messages.push(JSON.parse(options.body));return Response.json({ok:true}); }
+  if(url.startsWith('https://db.test/rest/v1/bot_control')) return Response.json([{pilot_locked:true,rental_enabled:true}]);
+  if(url.endsWith('/rpc/bot_weekly_preview')) return Response.json(null);
+  assert.ok(url.startsWith('https://db.test/rest/v1/bot_users'),'No paid endpoint during rental setup');
+  if(options.method==='PATCH') renter={...renter,...JSON.parse(options.body)};
+  return Response.json([structuredClone(renter)]);
+};
+await sendAs(456,'/settings');assert.match(messages.at(-1).text,/Maximum Warmmiete/);
+await sendAs(456,'rentedit:max_rent_eur',true);assert.equal(renter.rental_settings._edit,'max_rent_eur');
+await sendAs(456,'1200');assert.equal(renter.rental_settings.max_rent_eur,1200);assert.equal(renter.settings.max_price_eur,300000);
+await sendAs(456,'/daily on');assert.equal(renter.rental_daily,true);
+await sendAs(456,'pay:report',true);assert.match(messages.at(-1).text,/checkout is closed/);
+await sendAs(456,'service:investment',true);assert.equal(renter.service,'investment');assert.match(messages.at(-2).text,/free weekly preview/);
+renter.accepted_at=null;renter.service_selected=false;
+await sendAs(456,'/accept');assert.match(messages.at(-1).text,/Which service/);assert.equal(messages.at(-1).reply_markup.inline_keyboard.length,2);
+await sendAs(456,'/run');assert.match(messages.at(-1).text,/First choose your service/);
+console.log('Rental service choice, free-preview fallback, separate editing and closed checkout passed');

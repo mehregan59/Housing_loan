@@ -38,6 +38,7 @@ def page(view,source,index,language='en',username='MeHousingLoanBot'):
             'de':('Details','Anzeige','Zinsen & Annahmen','Seite'),
             'fa':('جزئیات','آگهی','نرخ بهره و فرض‌ها','صفحه')}
     detail,listing,notes,page_label=labels.get(language,labels['en'])
+    if '🏠 Rental apartments' in view['header']: notes='Rent & search notes'
     total=(len(view['cards'])+PAGE_SIZE-1)//PAGE_SIZE
     if not 0<=index<total: raise ValueError('Invalid report page')
     text=view['header']+'\n'+f'{page_label} {index+1}/{total}'

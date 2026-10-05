@@ -198,7 +198,10 @@ def run_job(db, job_id):
         if job.get('research_v2'):
             if job['settings'].get('_guide_version') != 1:
                 raise GuideRequired()
-            from research import analyse
+            if job.get("service")=="rental":
+                from rental import analyse
+            else:
+                from research import analyse
             request_rows=db.request('GET','bot_jobs?id=eq.'+job_id+'&select=request_key')
             job['force_refresh']=str(job['user_id'])==os.environ['ADMIN_USER_ID'] and bool(request_rows) and request_rows[0].get('request_key','').startswith('refresh:')
             report, urls, cache_hit = analyse(db, job, meter)
@@ -207,6 +210,7 @@ def run_job(db, job_id):
                 raise ResearchDataError('ReportNotFulfilled')
             cost = round(meter['cost'],6)
             usage = {'pipeline':2, 'cache_hit':cache_hit, 'research_calls':meter['calls'], 'report_signature':meter.get('report_signature'), 'shared_hit':meter.get('shared_hit',False), 'shared_publish_failed':meter.get('shared_publish_failed',False)}
+            usage['service']=job.get('service','investment')
             usage.update(data_expires_at=meter.get('data_expires_at'),collection_stats=meter.get('collection_stats',{}),partial=meter.get('partial',False),warnings=meter.get('warnings',[]),checkpoints=meter.get('checkpoints',[]),stage=meter.get('stage'))
             status = 'complete'
         else:
@@ -216,7 +220,7 @@ def run_job(db, job_id):
         if job.get('research_v2'):
             from research import ResearchDataError
             if isinstance(exc,ResearchDataError): error=exc.code
-            usage = {'pipeline':2, 'research_calls':meter['calls'],'stage':meter.get('stage'),'warnings':meter.get('warnings',[]),'checkpoints':meter.get('checkpoints',[])}
+            usage = {'pipeline':2, 'service':job.get('service','investment'), 'research_calls':meter['calls'],'stage':meter.get('stage'),'warnings':meter.get('warnings',[]),'checkpoints':meter.get('checkpoints',[])}
             if meter['pending']:
                 status = 'uncertain'
             else:
@@ -244,6 +248,8 @@ def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
             db.report(job['user_id'], report,job_id,job['settings'].get('language','en'))
             db.request('PATCH', 'bot_jobs?id=eq.'+job_id, {'delivered':True})
             delivered=True
+            if job.get('service')=='rental':
+                db.request('PATCH','bot_users?user_id=eq.'+str(job['user_id'])+'&rental_trial_used_at=is.null',{'rental_trial_used_at':datetime.now(timezone.utc).isoformat()})
             control = db.request('GET','bot_control?id=eq.1')[0]
             if control['channel_enabled'] and str(job['user_id']) == os.environ['ADMIN_USER_ID'] and os.getenv('CHANNEL_ID'):
                 db.telegram(os.environ['CHANNEL_ID'], report)
@@ -295,11 +301,18 @@ def sweep(db):
                              'p_usage':{},'p_error':'InterruptedWorker','p_urls':[]})
         db.admin('⚠️ Interrupted analysis; spending paused pending usage reconciliation. Job '+job['id'])
     for user in db.request('GET', 'bot_users?approved=eq.true&weekly=eq.true'):
+        if user.get('service','investment')!='investment':
+            continue
         if user.get('settings',{}).get('_guide_version') != 1:
             continue
         slot = due_slot(user, now)
         if slot:
             db.rpc('bot_enqueue', {'p_user':user['user_id'], 'p_key':f"schedule:{user['user_id']}:{slot}"})
+    if control.get('rental_enabled'):
+        local=now.astimezone(ZoneInfo('Europe/Berlin'))
+        if local.hour>=9:
+            for user in db.request('GET','bot_users?approved=eq.true&service=eq.rental&rental_daily=eq.true'):
+                db.rpc('bot_rental_enqueue',{'p_user':user['user_id'],'p_key':f"rentaldaily:{user['user_id']}:{local.date()}"})
     for job in db.request('GET', 'bot_jobs?status=eq.queued&order=created_at&limit=3'):
         run_job(db, job['id'])
 
@@ -340,6 +353,9 @@ def cleanup_apartment_data(db,now=None):
     """Remove public apartment data; preserve cost/usage ledger and user settings."""
     now=now or datetime.now(timezone.utc)
     cutoff=timestamp_filter(now-timedelta(days=7));current=timestamp_filter(now)
+    controls=db.request('GET','bot_control?id=eq.1')
+    if controls and 'rental_enabled' in controls[0]:
+        db.request('DELETE','bot_rental_cache?expires_at=lte.'+current)
     db.request('DELETE','bot_market_cache?expires_at=lte.'+current)
     db.request('DELETE','bot_shared_reports?expires_at=lte.'+current)
     db.request('DELETE','bot_seen?evaluated_at=lte.'+cutoff)

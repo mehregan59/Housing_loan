@@ -9,8 +9,8 @@ on:
   schedule:
     - cron: '17 * * * *'
     # 09:00 Berlin: 07:00 UTC in summer, 08:00 UTC in winter.
-    # Local due-slot checks and unique keys prevent duplicate weekly analyses.
-    - cron: '0 7,8 * * 1'
+    # Local date checks and unique keys prevent duplicate weekly/daily analyses.
+    - cron: '0 7,8 * * *'
 permissions:
   contents: read
 concurrency:

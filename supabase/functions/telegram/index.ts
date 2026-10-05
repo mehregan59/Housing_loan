@@ -2,6 +2,7 @@
 const env = (key: string) => { const v = Deno.env.get(key); if (!v) throw new Error('Missing configuration'); return v; };
 const NOTICE = 'Estimates only; general information, not financial advice or a financing commitment. Verify independently before deciding. Listing data may be incomplete. Settings and reports are stored in Supabase; analysis uses OpenAI; Telegram delivers messages. API costs are reported to the administrator. Do not send bank credentials or identity documents. /support forwards your message and Telegram ID to the administrator. This is a private pilot, not a publicly launched service.';
 const HELP = `Housing Loan Bot — Germany pilot
+/service — choose investment or rental apartments
 /start — read notice and accept
 /guide — step-by-step setup before your first analysis
 /settings — your investment settings; tap buttons to edit each field
@@ -27,6 +28,7 @@ Pilot users remain free. Paid checkout uses Telegram Stars; euro cost varies.
 Free: 1 report/week. Paid: up to 7. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. Manual membership during pilot. Delivery may be delayed; changing schedule does not add reports. If a report fails, use /support; repeated clicks cannot start parallel analyses.
 Editable numeric fields: max_loan_eur, equity_eur, max_price_eur, min_size_m2, radius_km, max_price_per_m2, target_gross_yield_pct, min_monthly_cashflow_eur, fixed_rate_years, repayment_pct. Optional targets accept "none". /set language en, de or fa. Other countries will require country-specific rules in a future release.`;
 const HELP_FA=`راهنمای ربات مسکن — آلمان
+/service — انتخاب سرمایه‌گذاری یا اجاره آپارتمان
 /guide — راهنمای گام‌به‌گام قبل از اولین تحلیل
 /settings — تنظیمات؛ برای تغییر هر مورد دکمه را بزنید
 /set language fa — گزارش فارسی
@@ -300,7 +302,8 @@ function addReportLink(text:string,entities:any[],label:string,url:string) {
   return text+label;
 }
 export function reportPage(view:ReturnType<typeof splitReport>,source:string,index:number,language:string) {
-  const [details,listing,notes,pageLabel]=reportLabels(language);
+  const [details,listing,normalNotes,pageLabel]=reportLabels(language);
+  const notes=view.header.includes('🏠 Rental apartments')?'Rent & search notes':normalNotes;
   const total=Math.ceil(view.cards.length/5);
   if(!Number.isSafeInteger(index)||index<0||index>=total) throw new Error('Invalid report page');
   let text=view.header+'\n'+`${pageLabel} ${index+1}/${total}`;
@@ -491,6 +494,91 @@ Deno.serve(async req => {
     const [rawcmd, ...parts] = text.split(/\s+/);
     const cmd = rawcmd.split('@')[0].toLowerCase();
     const rest = parts.join(' ');
+    const services={inline_keyboard:[[button('🏦 Property investment','service:investment')],[button('🏠 Rental apartment','service:rental')]]};
+    if(cmd==='/service'||action.startsWith('service:')) {
+      if(!user.accepted_at) { await reply(id,NOTICE,{inline_keyboard:[[button('I understand — continue','accept')]]});return new Response('ok'); }
+      if(action.startsWith('service:')) {
+        const service=action.slice(8);
+        if(!['investment','rental'].includes(service)) throw new Error('Invalid service');
+        await db('PATCH','bot_users?user_id=eq.'+id,{service,service_selected:true});
+        if(service==='investment') {
+          const preview=await db('POST','rpc/bot_weekly_preview',{p_user:id});
+          if(preview?.report) await reply(id,'🎁 Latest weekly investment report — free preview, using the weekly pilot settings.\n\n'+preview.report);
+          else await reply(id,'🎁 Your free weekly preview will be available once the first current administrator weekly report is delivered.');
+          const guide=setupGuide(0,user.settings.language,user);await reply(id,guide.text,guide.keyboard);
+        } else {
+          await reply(id,'🏠 Rental search\nYour first daily report is free. Choose your area, radius and maximum total monthly rent (Warmmiete), then tap Run. Existing pilot users remain free. Daily delivery is 09:00 Europe/Berlin; it is off until you enable it. Rental prices for 1, 5, 10 and 30 days are being measured and are not open yet. Use /settings to begin.',{inline_keyboard:[[button('⚙️ Rental settings','settings')],[button('🔎 First rental report','run')]]});
+        }
+      } else await reply(id,'Which service would you like?',services);
+      return new Response('ok');
+    }
+    if(user.accepted_at&&user.service_selected===false&&!['/start','/accept','/disclaimer','/support','/paysupport'].includes(cmd)) {
+      await reply(id,'First choose your service. Your free report will match that choice.',services);return new Response('ok');
+    }
+    if(user.accepted_at&&user.service==='rental') {
+      const rentalButtons={inline_keyboard:[[button('📍 Area','rentedit:location'),button('📏 Radius','rentedit:radius_km')],[button('💵 Maximum total rent','rentedit:max_rent_eur')],[button('🔎 Run rental search','run'),button('📂 Last report','last')],[button('📅 Daily on','rentdaily:on'),button('Daily off','rentdaily:off')],[button('🔀 Change service','service')]]};
+      const r=user.rental_settings||{location:'Freiburg',radius_km:25,max_rent_eur:1000};
+      if(action.startsWith('rentedit:')) {
+        const field=action.slice(9);
+        if(!['location','radius_km','max_rent_eur'].includes(field)) throw new Error('Invalid rental setting');
+        await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:{...r,_edit:field}});
+        await reply(id,field==='location'?'Send a town or district in Germany.':field==='radius_km'?'Send radius in km (0–300).':'Send your maximum Warmmiete in euros per month, e.g. 1200. Use /cancel to exit.');return new Response('ok');
+      }
+      if(cmd==='/cancel') {
+        const clean={...r};delete clean._edit;await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:clean});await reply(id,'Edit cancelled.',rentalButtons);return new Response('ok');
+      }
+      if((!cb&&!text.startsWith('/')&&r._edit)||cmd==='/set'||cmd==='/location') {
+        const field=cmd==='/location'?'location':cmd==='/set'?parts[0]:r._edit;
+        const value=cmd==='/location'?rest:cmd==='/set'?parts.slice(1).join(' '):text;
+        if(!['location','radius_km','max_rent_eur'].includes(field)) { await reply(id,'Rental fields: location, radius_km, max_rent_eur.',rentalButtons);return new Response('ok'); }
+        const changed={...r};delete changed._edit;
+        if(field==='location') { if(!value.trim()||value.length>100||/[\r\n]/.test(value)) throw new Error('Enter a town in Germany');changed.location=value.trim(); }
+        else { const n=Number(value.replace('€','').trim().replace(',','.'));if(!Number.isFinite(n)||(field==='radius_km'?(n<0||n>300):(n<=0||n>20000))) throw new Error('Invalid rental number');changed[field]=n; }
+        await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:changed});await reply(id,'✅ Rental setting updated.',rentalButtons);return new Response('ok');
+      }
+      if(cmd==='/settings'||cmd==='/guide'||cmd==='/help'||action.startsWith('guide:')) {
+        await reply(id,`🏠 Rental search\n📍 ${r.location}, Germany\n📏 Radius: ${r.radius_km} km\n💵 Maximum Warmmiete: €${r.max_rent_eur}/month\n📅 Daily: ${user.rental_daily?'On':'Off'} · 09:00 Europe/Berlin\n\nTap a setting to edit it, then Run. Advertised Warmmiete is total housing rent; separate electricity/internet may cost extra. Missing rent or distance is shown as provisional, never zero. First report free; pilot users remain free. Reports reopen free for seven days. /daily on or off controls delivery. /service switches services. /support followed by your question contacts support.`,rentalButtons);return new Response('ok');
+      }
+      if(cmd==='/daily'||action.startsWith('rentdaily:')) {
+        const choice=cmd==='/daily'?rest:action.slice(10);
+        if(!['on','off'].includes(choice)) throw new Error('Use /daily on or off');
+        await db('PATCH','bot_users?user_id=eq.'+id,{rental_daily:choice==='on'});await reply(id,'Daily rental delivery '+choice+'. Your allowance and the API spending cap still apply.',rentalButtons);return new Response('ok');
+      }
+      if(cmd==='/buy') { await reply(id,'Rental packages: 1, 5, 10 or 30 days. Prices are not set yet; checkout is closed. Your first report and current pilot access are free.',rentalButtons);return new Response('ok'); }
+      if(cmd==='/last'||cmd==='/saved') {
+        const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&service=eq.rental&status=eq.complete&report=not.is.null&order=finished_at.desc&limit=1&select=id,report');
+        if(jobs.length) { await sendReport(id,jobs[0].report,'j'+jobs[0].id,'en');await db('PATCH','bot_jobs?id=eq.'+jobs[0].id,{delivered:true});await db('PATCH','bot_users?user_id=eq.'+id+'&rental_trial_used_at=is.null',{rental_trial_used_at:new Date().toISOString()}); }
+        else await reply(id,'No saved rental report. Tap Run for your first free report.',rentalButtons);
+        return new Response('ok');
+      }
+      if(cmd==='/run'||cmd==='/refresh') {
+        if(cmd==='/refresh'&&!adminUnlimited) { await reply(id,'Only the administrator can force new paid research.');return new Response('ok'); }
+        const result=await db('POST','rpc/bot_rental_enqueue',{p_user:id,p_key:(cmd==='/refresh'?'refresh:':'rental:')+update.update_id});
+        if(result.error) await reply(id,'Rental search not started: '+result.error+'. Use /last to reopen a saved report for free.');
+        else if(result.duplicate) await reply(id,'Already recorded; results will arrive here.');
+        else { try { await dispatch(result.job_id);await reply(id,'Rental search queued. Results will arrive here.'); } catch { await reply(id,'Saved in the queue; the scheduled worker will recover it.'); } }
+        return new Response('ok');
+      }
+    }
+    if(user.service==='rental'&&(/^pay:/.test(action)||action==='buy')) {
+      await reply(id,'Rental prices are not set; rental checkout is closed. Use /buy for current rental information.');return new Response('ok');
+    }
+    if(adminUnlimited&&cmd==='/rentalcost') {
+      const jobs=await db('GET','bot_jobs?service=eq.rental&select=status,charged_usd,delivered,usage&order=created_at.desc&limit=1000');
+      const settled=jobs.filter((j:any)=>j.charged_usd!==null);
+      const total=settled.reduce((sum:number,j:any)=>sum+Number(j.charged_usd),0);
+      const delivered=jobs.filter((j:any)=>j.delivered).length;
+      const hits=jobs.filter((j:any)=>j.usage?.shared_hit).length;
+      await reply(id,`📊 Rental pilot costs (latest ${jobs.length} runs)
+Delivered: ${delivered}
+Shared cache hits: ${hits}
+Failed/uncertain: ${jobs.filter((j:any)=>['failed','uncertain'].includes(j.status)).length}
+Known estimated API spend: $${total.toFixed(4)}
+API cost per delivered report, including settled failures: ${delivered?'$'+(total/delivered).toFixed(4):'Not enough data'}
+Unsettled costs: ${jobs.length-settled.length}
+Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currency conversion and a profit margin before choosing prices.`);
+      return new Response('ok');
+    }
     if(cmd==='/terms'||action==='pay:terms') {
       await reply(id,(billingControl?.payment_terms_text||'Payments are not yet open. The operator’s payment terms will be displayed here before checkout.')+'\n\n'+PAYMENT_GUIDE,
         billingControl?.payments_enabled&&billingControl?.payment_terms_text?{inline_keyboard:[[{text:'I agree to the payment terms',callback_data:'pay:accept'}]]}:undefined);
@@ -661,9 +749,7 @@ Deno.serve(async req => {
       await reply(id,NOTICE,{inline_keyboard:[[{text:'I understand — continue',callback_data:'accept'}]]});
     } else if (cmd==='/accept') {
       await db('PATCH','bot_users?user_id=eq.'+id,{accepted_at:new Date().toISOString()});
-      const guide=setupGuide(0,user.settings.language,user);
-      await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_guide_step:0,_guide_seen:Math.max(0,Number(user.settings._guide_seen??-1))}});
-      await reply(id,guide.text,guide.keyboard);
+      await reply(id,'Which service would you like?',services);
     } else if (cmd==='/help') {
       await reply(id,(user.settings.language==='fa'?HELP_FA:HELP).replace(user.payments_active?'Free: 1 report/week. Paid: up to 7. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. Manual membership during pilot.':'__unused__',user.payments_active?'Paid reports are purchased individually; the 30-day pass covers weekly deliveries.':'')+(user.payments_active?'\n\n'+PAYMENT_GUIDE:'')+'\n\n'+(user.settings.language==='fa'?CALCULATIONS_FA:user.settings.language==='de'?CALCULATIONS_DE:CALCULATIONS_EN),buttons);
     } else if (cmd==='/support'||cmd==='/paysupport') {
@@ -750,7 +836,7 @@ Deno.serve(async req => {
       if(user.payments_active) { await paymentShop(id,user,billingControl,adminUnlimited);return new Response('ok'); }
       await reply(id,adminUnlimited?`Administrator: no weekly report limit.\nReports this week: ${used}.\nMonthly spending cap and one active analysis at a time still apply.`:`Plan: ${user.plan}\nUsed: ${used} / ${user.plan==='paid'?7:1} this week. Reset Monday 00:00 Europe/Berlin.`);
     } else if (cmd==='/last') {
-      const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&status=eq.complete&order=finished_at.desc&limit=1&select=id,report');
+      const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&service=eq.investment&status=eq.complete&order=finished_at.desc&limit=1&select=id,report');
       if(jobs.length) await sendReport(id,jobs[0].report,'j'+jobs[0].id,user.settings.language);
       else await reply(id,'No completed report yet.');
     } else if (cmd==='/run'||cmd==='/saved'||cmd==='/refresh') {
