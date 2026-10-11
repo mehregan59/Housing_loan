@@ -384,6 +384,12 @@ await sendAs(123,'rentedit:max_cold_rent_eur',true);await sendAs(123,'800');asse
 await sendAs(123,'/set max_charges_eur 200');assert.match(messages.at(-1).text,/Maximum Nebenkosten: €200/);
 await sendAs(123,'/set max_rent_eur none');assert.equal(renter.rental_settings.max_rent_eur,null);assert.match(messages.at(-1).text,/Maximum Warmmiete: No limit/);
 await sendAs(123,'/location Berlin');assert.match(messages.at(-1).text,/Berlin, Germany/);assert.match(messages.at(-1).text,/Maximum cold rent: €800/);
+await sendAs(123,'rentlang:de',true);assert.equal(renter.rental_settings.language,'de');assert.match(messages.at(-1).text,/Ihre Mietsuche/);assert.match(messages.at(-1).text,/Maximale Kaltmiete/);assert.ok(messages.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='🔎 Mietsuche starten'));
+await sendAs(123,'/help');assert.match(messages.at(-1).text,/Grenzen werden separat geprüft/);
+await sendAs(123,'/set language en');assert.equal(renter.rental_settings.language,'en');assert.match(messages.at(-1).text,/Your rental settings/);assert.ok(messages.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='🔎 Run rental search'));
+const {rentalReportLanguage}=await import('../supabase/functions/telegram/index.ts');
+const englishRental='🏠 Rental apartments — Berlin\n🏠 — Original title\n🏷 Cold rent: €800/month\n🧾 Nebenkosten: €200/month\n💶 RENT & SEARCH NOTES\nInformation only; verify the listing and lease independently.';
+const germanRental=rentalReportLanguage(englishRental,'de');assert.match(germanRental,/Kaltmiete: €800\/Monat/);assert.match(germanRental,/Original title/);assert.equal(rentalReportLanguage(germanRental,'en'),englishRental);
 console.log('Rental service choice, free-preview fallback, separate editing and closed checkout passed');
 
 // Agreement updates require the exact current version and unpin only owned notices.
@@ -403,3 +409,20 @@ await sendAs(456,'agreement:2',true);assert.equal(agreementUser.agreement_versio
 assert.ok(agreementCalls.some(x=>x.url.endsWith('/unpinChatMessage')&&x.body.message_id===777&&x.body.chat_id===456));
 assert.ok(!agreementCalls.some(x=>x.url.endsWith('/unpinAllChatMessages')));
 console.log('Versioned agreement review, stale acceptance rejection and scoped notice unpin passed');
+
+const germanSettings=settingsSummary({settings:{...summaryUserSettings(),language:'de'},weekly:true,schedule_day:0,schedule_time:'09:00',timezone:'Europe/Berlin',admin_unlimited:true});
+function summaryUserSettings(){return {location:'Freiburg',radius_km:150,max_price_eur:300000,max_loan_eur:300000,equity_eur:10000,min_size_m2:30,repayment_pct:2,fixed_rate_years:30,areas:[],exclude:['Erbpacht'],_guide_version:1};}
+assert.match(germanSettings,/Ihre Immobiliensuche/);assert.match(germanSettings,/Maximaler Kredit/);assert.match(germanSettings,/Montag/);assert.match(germanSettings,/Wöchentliche Berichte: An/);
+
+// German loan help is explicit; investment language remains editable under pilot lock.
+let loanUser={...renter,service:'investment',settings:{...summaryUserSettings(),language:'de'}};
+globalThis.fetch=async(url,options={})=>{
+ if(url.startsWith('https://api.telegram.org/')){if(url.endsWith('/sendMessage'))messages.push(JSON.parse(options.body));return Response.json({ok:true});}
+ if(url.startsWith('https://db.test/rest/v1/bot_control'))return Response.json([{pilot_locked:true}]);
+ if(url.startsWith('https://db.test/rest/v1/bot_users')){if(options.method==='PATCH')loanUser={...loanUser,...JSON.parse(options.body)};return Response.json([structuredClone(loanUser)]);}
+ throw new Error('Unexpected German loan endpoint');
+};
+await sendAs(456,'/help');assert.match(messages.at(-1).text,/Wohnungs- und Kreditbot/);assert.match(messages.at(-1).text,/Bruttomietrendite/);
+await sendAs(456,'/settings');assert.match(messages.at(-1).text,/Ihre Immobiliensuche/);assert.ok(messages.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='edit:language'));
+await sendAs(456,'/set language en');assert.equal(loanUser.settings.language,'en');
+console.log('German investment settings/help and language editing under pilot lock passed');

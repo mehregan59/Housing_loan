@@ -38,6 +38,7 @@ jobs:
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f tests/rental_database.sql
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f tests/weekly_pilot_database.sql
           psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f tests/rental_limits_database.sql
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f tests/rental_language_database.sql
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x

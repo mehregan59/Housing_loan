@@ -27,6 +27,34 @@ Example: /set max_price_eur 250000
 Pilot users remain free. Paid checkout uses Telegram Stars; euro cost varies.
 Free: 1 report/week. Paid: up to 7. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. Manual membership during pilot. Delivery may be delayed; changing schedule does not add reports. If a report fails, use /support; repeated clicks cannot start parallel analyses.
 Editable numeric fields: max_loan_eur, equity_eur, max_price_eur, min_size_m2, radius_km, max_price_per_m2, target_gross_yield_pct, min_monthly_cashflow_eur, fixed_rate_years, repayment_pct. Optional targets accept "none". /set language en, de or fa. Other countries will require country-specific rules in a future release.`;
+const HELP_DE=`Wohnungs- und Kreditbot — Deutschland-Pilot
+/service — Investition oder Mietwohnung wählen
+/start — Hinweise lesen und zustimmen
+/guide — Anleitung Schritt für Schritt
+/settings — Einstellungen anzeigen; Schaltflächen zum Bearbeiten
+/cancel — Änderung abbrechen
+/set FELD WERT — einen Wert ändern
+Beispiel: /set max_price_eur 250000
+/set language de — Deutsch; en — Englisch; fa — Persisch
+/location Freiburg — Ort in Deutschland
+/areas Freiburg, Emmendingen — bevorzugte Orte
+/exclude Erbpacht, Zwangsversteigerung — Ausschlüsse; none entfernt sie
+/schedule mon 09:00 Europe/Berlin — Tag, Uhrzeit und Zeitzone
+/weekly on oder off — Wochenberichte ein-/ausschalten
+/run — Analyse, möglichst mit gespeicherter Recherche
+/refresh — nur Administrator: neue kostenpflichtige Recherche innerhalb des Budgets
+/quota — Berichtslimit
+/last — letzter gespeicherter Bericht
+/saved — Bericht für Ihre Einstellungen ohne neue API-Kosten
+/support IHRE FRAGE — Support kontaktieren
+/disclaimer — Hinweise zur Nutzung und Datenverarbeitung
+/buy — Einzelbericht oder 30-Tage-Wochenpass, wenn Zahlungen aktiviert sind
+/terms — Kaufbedingungen
+/paysupport IHRE FRAGE — Hilfe bei Zahlungen
+
+Pilotnutzer bleiben kostenlos. Zahlungen erfolgen über Telegram Stars; der Europreis kann variieren. Zustellung kann sich verzögern. Eine Zeitplanänderung erhöht das Berichtslimit nicht. Bei Fehlern /support nutzen; wiederholtes Starten erzeugt keine parallelen Analysen.
+
+Felder: max_loan_eur, equity_eur, max_price_eur, min_size_m2, radius_km, max_price_per_m2, target_gross_yield_pct, min_monthly_cashflow_eur, fixed_rate_years, repayment_pct. Mit none optionale Filter entfernen. Im Pilot können Investitionseinstellungen gesperrt sein. Andere Länder benötigen künftig eigene Regeln.`;
 const HELP_FA=`راهنمای ربات مسکن — آلمان
 /service — انتخاب سرمایه‌گذاری یا اجاره آپارتمان
 /guide — راهنمای گام‌به‌گام قبل از اولین تحلیل
@@ -102,6 +130,13 @@ const GROUPS: Record<string,string[]> = {
 };
 const button=(text:string,data:string)=>({text,callback_data:data});
 const money=(v:unknown)=>new Intl.NumberFormat('en-GB',{style:'currency',currency:'EUR',maximumFractionDigits:2}).format(Number(v));
+export function investmentGerman(text:string):string {
+  const pairs:[string,string][]=[["Setup guide not completed — open /guide", "Einrichtungsanleitung noch nicht abgeschlossen — /guide öffnen"], ["Your property search", "Ihre Immobiliensuche"], ["Germany · within", "Deutschland · im Umkreis von"], ["Preferred towns:", "Bevorzugte Orte:"], ["No additional preference", "Keine zusätzliche Präferenz"], ["Maximum purchase price", "Maximaler Kaufpreis"], ["Minimum size", "Mindestgröße"], ["Report language", "Berichtssprache"], ["Financing assumptions", "Finanzierungsannahmen"], ["Maximum loan", "Maximaler Kredit"], ["Available equity", "Verfügbares Eigenkapital"], ["Fixed interest period", "Zinsbindung"], ["Initial annual repayment", "Anfängliche jährliche Tilgung"], ["Not set — mortgage payment unavailable", "Nicht festgelegt — Kreditrate nicht berechenbar"], ["Investment targets", "Investitionsziele"], ["Maximum price per m²", "Maximaler Preis pro m²"], ["Gross rental yield", "Bruttomietrendite"], ["Monthly cashflow", "Monatlicher Cashflow"], ["No filter set", "Kein Filter gesetzt"], ["Excluded:", "Ausgeschlossen:"], ["Leasehold", "Erbpacht"], ["Foreclosure auctions", "Zwangsversteigerungen"], ["Weekly reports:", "Wöchentliche Berichte:"], ["Schedule:", "Zeitplan:"], ["Plan:", "Zugang:"], ["Administrator — no weekly report limit", "Administrator — keine wöchentliche Berichtsbeschränkung"], ["Pay per report / optional 30-day weekly pass", "Einzelbericht / optionaler 30-Tage-Wochenpass"], ["Pilot — no payment required", "Pilot — keine Zahlung erforderlich"], ["Paid — up to 7 reports/week", "Bezahlt — bis zu 7 Berichte/Woche"], ["Free — 1 report/week", "Kostenlos — 1 Bericht/Woche"], ["Pilot settings are fixed for all users. Weekly reports: Monday 09:00 Europe/Berlin.", "Piloteinstellungen sind für alle Nutzer fest. Wochenberichte: Montag 09:00 Europe/Berlin."], ["Tap a button below to edit.", "Zum Ändern eine Schaltfläche antippen."], ["Purchase costs count toward your loan limit. These are preferences, not a financing approval.", "Kaufnebenkosten zählen zur Kreditgrenze. Dies sind Präferenzen, keine Finanzierungszusage."], ["Edit search", "Suche bearbeiten"], ["Edit financing", "Finanzierung bearbeiten"], ["Exclusions", "Ausschlüsse"], ["Change schedule", "Zeitplan ändern"], ["Run analysis", "Analyse starten"], ["Help", "Hilfe"], ["Continue guide", "Anleitung fortsetzen"], ["My settings", "Meine Einstellungen"], ["Saved report (free)", "Gespeicherter Bericht (kostenlos)"], ["Setup guide", "Einrichtungsanleitung"], ["Location (Germany)", "Ort (Deutschland)"], ["Preferred areas", "Bevorzugte Orte"], ["Search radius (km)", "Suchradius (km)"], ["Maximum purchase price (€)", "Maximaler Kaufpreis (€)"], ["Minimum apartment size (m²)", "Mindestwohnfläche (m²)"], ["Report language", "Berichtssprache"], ["Target gross rental yield", "Ziel-Bruttomietrendite"], ["Minimum monthly cashflow", "Minimaler monatlicher Cashflow"], ["Schedule time", "Uhrzeit"], ["Timezone", "Zeitzone"], ["Send the new value in your next message.", "Senden Sie den neuen Wert in Ihrer nächsten Nachricht."], ["Example:", "Beispiel:"], ["Send none to remove this filter.", "Mit none diesen Filter entfernen."], ["Use /cancel to leave without changing it.", "Mit /cancel ohne Änderung abbrechen."], ["years", "Jahre"], ["Monday", "Montag"], ["Tuesday", "Dienstag"], ["Wednesday", "Mittwoch"], ["Thursday", "Donnerstag"], ["Friday", "Freitag"], ["Saturday", "Samstag"], ["Sunday", "Sonntag"], ["German", "Deutsch"], ["English", "Englisch"]];
+  pairs.push(['City','Ort'],['Search radius','Suchradius'],['Preferred towns','Bevorzugte Orte'],['Delivery time','Zustellungszeit'],['Language','Sprache'],['Cancel','Abbrechen'],['Choose your report language:','Berichtssprache auswählen:'],['Report language saved:','Berichtssprache gespeichert:'],['Edit cancelled. Your settings are unchanged.','Änderung abgebrochen. Ihre Einstellungen bleiben unverändert.'],['Open /settings to choose a setting.','Mit /settings eine Einstellung auswählen.'],['Saved report','Gespeicherter Bericht'],['Guide','Anleitung']);
+  pairs.sort((a,b)=>b[0].length-a[0].length);
+  for(const [en,de] of pairs) text=text.split(en).join(de);
+  return text.replace(/Weekly reports: On/g,'Wöchentliche Berichte: An').replace(/Wöchentliche Berichte: On/g,'Wöchentliche Berichte: An').replace(/Wöchentliche Berichte: Off/g,'Wöchentliche Berichte: Aus').replace(/Ausgeschlossen: None/g,'Ausgeschlossen: Keine');
+}
 export function settingsSummary(u:any):string {
   const s=u.settings;
   if (s.language==='fa') {
@@ -131,7 +166,7 @@ export function settingsSummary(u:any):string {
   }
   const optional=(key:string,unit:string)=>s[key]==null?'No filter set':unit==='EUR'?money(s[key]):s[key]+unit;
   const exclusions=(s.exclude||[]).map((x:string)=>x==='Erbpacht'?'Leasehold':x==='Zwangsversteigerung'?'Foreclosure auctions':x).join(', ')||'None';
-  return (s._guide_version===1?'':'📌 Setup guide not completed — open /guide\n\n')+`🏠 Your property search
+  const summary=(s._guide_version===1?'':'📌 Setup guide not completed — open /guide\n\n')+`🏠 Your property search
 📍 ${s.location}, Germany · within ${s.radius_km} km
 Preferred towns: ${(s.areas||[]).join(', ')||'No additional preference'}
 💶 Maximum purchase price: ${money(s.max_price_eur)}
@@ -156,6 +191,7 @@ Schedule: ${DAYS[u.schedule_day]}, ${u.schedule_time} · ${u.timezone}
 Plan: ${u.admin_unlimited?'Administrator — no weekly report limit':u.payments_active?'Pay per report / optional 30-day weekly pass':u.pilot_free?'Pilot — no payment required':u.plan==='paid'?'Paid — up to 7 reports/week':'Free — 1 report/week'}
 
 ${u.pilot_locked?'🔒 Pilot settings are fixed for all users. Weekly reports: Monday 09:00 Europe/Berlin.':'Tap a button below to edit.'} Purchase costs count toward your loan limit. These are preferences, not a financing approval.`;
+  return s.language==='de'?investmentGerman(summary):summary;
 }
 const settingsButtons={inline_keyboard:[
   [button('🔎 Edit search','menu:search'),button('🏦 Edit financing','menu:finance')],
@@ -293,7 +329,7 @@ export function splitReport(report:string) {
     const lines=detail.split('\n');
     const urls=lines.at(-1)!.match(/https?:\/\/\S+/g);
     if(!urls) return {header:report,cards:[],notes:''};
-    const brief=[lines[0],...['📍','🏷','📐','💵','🏦','💳','📈'].flatMap(p=>lines.filter(l=>l.startsWith(p)))].join('\n');
+    const brief=[lines[0],...['📍','🏷','🧾','📐','💵','🏦','💳','📈'].flatMap(p=>lines.filter(l=>l.startsWith(p)))].join('\n');
     cards.push({detail,brief,url:urls.at(-1)!});
   }
   return {header:report.slice(0,headings[0].index).trim(),cards,notes:report.slice(notesStart).trim()};
@@ -313,7 +349,7 @@ function addReportLink(text:string,entities:any[],label:string,url:string) {
 }
 export function reportPage(view:ReturnType<typeof splitReport>,source:string,index:number,language:string) {
   const [details,listing,normalNotes,pageLabel]=reportLabels(language);
-  const notes=view.header.includes('🏠 Rental apartments')?'Rent & search notes':normalNotes;
+  const notes=/🏠 (Rental apartments|Mietwohnungen)/.test(view.header)?(language==='de'?'Miete & Suchhinweise':'Rent & search notes'):normalNotes;
   const total=Math.ceil(view.cards.length/5);
   if(!Number.isSafeInteger(index)||index<0||index>=total) throw new Error('Invalid report page');
   let text=view.header+'\n'+`${pageLabel} ${index+1}/${total}`;
@@ -334,8 +370,20 @@ async function reportHash(report:string) {
   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(report));
   return [...new Uint8Array(digest)].map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,12);
 }
+export function rentalReportLanguage(text:string,language:string) {
+  if(!/🏠 (Rental apartments|Mietwohnungen) —/.test(text)) return text;
+  const pairs:[string,string][]=[["🏠 Rental apartments —", "🏠 Mietwohnungen —"], ["Germany · within", "Deutschland · im Umkreis von"], ["maximum Warmmiete", "maximale Warmmiete"], ["/month", "/Monat"], ["No limit", "Keine Grenze"], ["Checked:", "Geprüft:"], ["within verified limits;", "innerhalb bestätigter Grenzen;"], ["provisional (rent or distance unverified).", "vorläufig (Miete oder Entfernung nicht bestätigt)."], ["Search coverage is limited; this is not an exhaustive market search.", "Die Suche deckt nur einen Teil des Marktes ab; sie ist nicht vollständig."], ["New verified listings:", "Neue bestätigte Anzeigen:"], ["retained total:", "insgesamt gespeichert:"], ["⚠️ Partial rental research:", "⚠️ Unvollständige Mietrecherche:"], ["Collection stages:", "Suchschritte:"], ["Total monthly rent:", "Warmmiete:"], ["Cold rent:", "Kaltmiete:"], ["Size:", "Wohnfläche:"], ["Available:", "Verfügbar ab:"], ["Deposit:", "Kaution:"], ["Listing:", "Anzeige:"], ["Missing data", "Fehlende Angabe"], ["Missing total rent", "Warmmiete fehlt"], ["advertised Warmmiete", "angegebene Warmmiete"], ["calculated from advertised cold rent + complete charges", "aus angegebener Kaltmiete + vollständigen Nebenkosten berechnet"], ["total monthly rent missing — budget compliance unverified", "Warmmiete fehlt — Budgeteinhaltung nicht bestätigt"], ["distance unverified — radius compliance unverified", "Entfernung nicht bestätigt — Umkreis nicht bestätigt"], ["total missing — selected limit unverified", "Warmmiete fehlt — ausgewählte Grenze nicht bestätigt"], ["cold rent missing — selected limit unverified", "Kaltmiete fehlt — ausgewählte Grenze nicht bestätigt"], ["Nebenkosten missing — selected limit unverified", "Nebenkosten fehlen — ausgewählte Grenze nicht bestätigt"], ["Confirm availability, lease and all charges with the landlord.", "Verfügbarkeit, Mietvertrag und alle Kosten beim Vermieter bestätigen lassen."], ["💶 RENT & SEARCH NOTES", "💶 MIETE & SUCHHINWEISE"], ["Warmmiete is the advertised total housing rent. Electricity, internet or other separately paid charges may be extra. Missing charges are never treated as zero. Provisional listings may exceed your budget or radius. Availability is not guaranteed; contact the landlord.", "Warmmiete ist die angegebene Gesamtmiete. Separat gezahlter Strom, Internet oder andere Kosten können hinzukommen. Fehlende Kosten gelten niemals als null. Vorläufige Anzeigen können Budget oder Umkreis überschreiten. Verfügbarkeit ist nicht garantiert; kontaktieren Sie den Vermieter."], ["Public listing data is removed after seven days.", "Öffentliche Anzeigendaten werden nach sieben Tagen gelöscht."], ["Information only; verify the listing and lease independently.", "Nur zur Information; Anzeige und Mietvertrag selbstständig prüfen."]];
+  const german=language==='de';
+  pairs.sort((a,b)=>(german?b[0].length:b[1].length)-(german?a[0].length:a[1].length));
+  return text.split('\n').map(line=>{
+    if(line.startsWith('🏠 — ')||(line.startsWith('📍 ')&&!/Germany · within|Deutschland · im Umkreis von/.test(line))) return line;
+    for(const [en,de] of pairs) line=line.split(german?en:de).join(german?de:en);
+    return line;
+  }).join('\n');
+}
 async function sendReport(id:number,report:string,source:string,language:string) {
   if(!report) { await reply(id,language==='fa'?'این گزارش منقضی شده است. داده‌های آپارتمان پس از هفت روز پاک می‌شوند.':language==='de'?'Dieser Bericht ist abgelaufen. Wohnungsdaten werden nach sieben Tagen gelöscht.':'This report has expired. Apartment data is removed after seven days.'); return; }
+  report=rentalReportLanguage(report,language);
   const view=splitReport(report);
   if(!view.cards.length) return reply(id,report);
   for(let i=0;i<Math.ceil(view.cards.length/5);i++) {
@@ -384,6 +432,7 @@ function paymentOrderId(payload:unknown) {
 
 Deno.serve(async req => {
   let replyTo: number | undefined;
+  let replyLanguage='en';
   if (req.method!=='POST') return new Response('Method not allowed',{status:405});
   if (req.headers.get('X-Telegram-Bot-Api-Secret-Token')!==env('TELEGRAM_WEBHOOK_SECRET')) return new Response('Forbidden',{status:403});
   if (Number(req.headers.get('content-length') || 0)>16000) return new Response('Too large',{status:413});
@@ -504,96 +553,120 @@ Deno.serve(async req => {
     const [rawcmd, ...parts] = text.split(/\s+/);
     const cmd = rawcmd.split('@')[0].toLowerCase();
     const rest = parts.join(' ');
-    const services={inline_keyboard:[[button('🏦 Property investment','service:investment')],...(adminUnlimited?[[button('🏠 Rental apartment','service:rental')]]:[])]};
+    const uiLanguage=user.service==='rental'?(user.rental_settings?.language||user.settings.language):user.settings.language;
+    replyLanguage=uiLanguage;
+    const ui=(en:string,de:string)=>uiLanguage==='de'?de:en;
+    const localizedReply=async(chat:number,body:string,keyboard?:any,entities?:any[])=>{
+      const german=uiLanguage==='de'&&user.service!=='rental';
+      const translateBody=german&&!entities?.length&&!/🏠 (Apartment screening|Wohnungssuche|Rental apartments|Mietwohnungen) —/.test(body);
+      const keys=german&&keyboard?.inline_keyboard?{...keyboard,inline_keyboard:keyboard.inline_keyboard.map((row:any[])=>row.map(b=>({...b,text:investmentGerman(b.text)})))}:keyboard;
+      return reply(chat,translateBody?investmentGerman(body):body,keys,entities);
+    };
+    const services={inline_keyboard:[[button(ui('🏦 Property investment','🏦 Immobilieninvestition'),'service:investment')],...(adminUnlimited?[[button(ui('🏠 Rental apartment','🏠 Mietwohnung'),'service:rental')]]:[])]};
     if(action.startsWith('agreement:')) {
       const version=Number(action.slice(10));
       if(!Number.isSafeInteger(version)||version!==Number(billingControl?.agreement_version||1)||!billingControl?.agreement_text) {
-        await reply(id,'This agreement button is out of date. Send /start to review the current notice.');return new Response('ok');
+        await localizedReply(id,'This agreement button is out of date. Send /start to review the current notice.');return new Response('ok');
       }
       await db('PATCH','bot_users?user_id=eq.'+id,{accepted_at:new Date().toISOString(),agreement_version_accepted:version});
       if(billingControl?.notices_enabled) { try { await clearNoticePins(id,'agreement',version); } catch { /* Worker retries removal. */ } }
-      await reply(id,'✅ Agreement version '+version+' accepted.',services);return new Response('ok');
+      await localizedReply(id,'✅ Agreement version '+version+' accepted.',services);return new Response('ok');
     }
     if(cmd==='/service'||action.startsWith('service:')) {
-      if(!user.accepted_at) { await reply(id,NOTICE,{inline_keyboard:[[button('I understand — continue','accept')]]});return new Response('ok'); }
+      if(!user.accepted_at) { await localizedReply(id,NOTICE,{inline_keyboard:[[button('I understand — continue','accept')]]});return new Response('ok'); }
       if(action.startsWith('service:')) {
         const service=action.slice(8);
         if(!['investment','rental'].includes(service)) throw new Error('Invalid service');
-        if(service==='rental'&&!adminUnlimited) { await reply(id,'Rental searches are currently administrator-only.');return new Response('ok'); }
-        await db('PATCH','bot_users?user_id=eq.'+id,{service,service_selected:true});
+        if(service==='rental'&&!adminUnlimited) { await localizedReply(id,ui('Rental searches are currently administrator-only.','Die Mietsuche ist derzeit nur für den Administrator verfügbar.'));return new Response('ok'); }
+        await db('PATCH','bot_users?user_id=eq.'+id,{service,service_selected:true,...(service==='rental'?{rental_settings:{...(user.rental_settings||{location:'Freiburg',radius_km:25,max_rent_eur:1000}),language:user.rental_settings?.language||(user.settings.language==='de'?'de':'en')}}:{})});
         if(service==='investment') {
           const preview=await db('POST','rpc/bot_weekly_preview',{p_user:id});
-          if(preview?.report) await reply(id,'🎁 Latest weekly investment report — free preview, using the weekly pilot settings.\n\n'+preview.report);
-          else await reply(id,'🎁 Your free weekly preview will be available once the first current administrator weekly report is delivered.');
-          const guide=setupGuide(0,user.settings.language,user);await reply(id,guide.text,guide.keyboard);
+          if(preview?.report) await localizedReply(id,'🎁 Latest weekly investment report — free preview, using the weekly pilot settings.\n\n'+preview.report);
+          else await localizedReply(id,'🎁 Your free weekly preview will be available once the first current administrator weekly report is delivered.');
+          const guide=setupGuide(0,user.settings.language,user);await localizedReply(id,guide.text,guide.keyboard);
         } else {
-          await reply(id,'🏠 Rental search\nYour first daily report is free. Choose your area, radius and maximum total monthly rent (Warmmiete), then tap Run. Existing pilot users remain free. Daily delivery is 09:00 Europe/Berlin; it is off until you enable it. Rental prices for 1, 5, 10 and 30 days are being measured and are not open yet. Use /settings to begin.',{inline_keyboard:[[button('⚙️ Rental settings','settings')],[button('🔎 First rental report','run')]]});
+          await localizedReply(id,ui('🏠 Rental search\nYour first daily report is free. Choose your area, radius and maximum total monthly rent (Warmmiete), then tap Run. Existing pilot users remain free. Daily delivery is 09:00 Europe/Berlin; it is off until you enable it. Rental prices for 1, 5, 10 and 30 days are being measured and are not open yet. Use /settings to begin.','🏠 Mietsuche\nIhr erster Tagesbericht ist kostenlos. Wählen Sie Ort, Umkreis und Mietgrenzen, dann starten Sie die Suche. Pilotnutzer bleiben kostenlos. Tägliche Zustellung: 09:00 Europe/Berlin; zunächst ausgeschaltet. Mietpakete für 1, 5, 10 und 30 Tage sind noch nicht verfügbar. Mit /settings beginnen und English oder Deutsch auswählen.'),{inline_keyboard:[[button(ui('⚙️ Rental settings','⚙️ Mieteinstellungen'),'settings')],[button(ui('🔎 First rental report','🔎 Erster Mietbericht'),'run')]]});
         }
-      } else await reply(id,'Which service would you like?',services);
+      } else await localizedReply(id,ui('Which service would you like?','Welchen Dienst möchten Sie nutzen?'),services);
       return new Response('ok');
     }
     if(user.accepted_at&&user.service_selected===false&&!['/start','/accept','/disclaimer','/support','/paysupport'].includes(cmd)) {
-      await reply(id,'First choose your service. Your free report will match that choice.',services);return new Response('ok');
+      await localizedReply(id,'First choose your service. Your free report will match that choice.',services);return new Response('ok');
     }
     if(user.accepted_at&&user.service==='rental') {
-      const rentalButtons={inline_keyboard:[[button('📍 Area','rentedit:location'),button('📏 Radius','rentedit:radius_km')],[button('💵 Max Warmmiete','rentedit:max_rent_eur')],[button('🏷 Max cold rent','rentedit:max_cold_rent_eur'),button('🧾 Max Nebenkosten','rentedit:max_charges_eur')],[button('🔎 Run rental search','run'),button('📂 Last report','last')],[button('📅 Daily on','rentdaily:on'),button('Daily off','rentdaily:off')],[button('🔀 Change service','service')]]};
       const r=user.rental_settings||{location:'Freiburg',radius_km:25,max_rent_eur:1000};
-      const rentalSummary=(v:any)=>`🏠 Your rental settings
-📍 ${v.location}, Germany
-📏 Radius: ${v.radius_km} km
-💵 Maximum Warmmiete: ${v.max_rent_eur==null?'No limit':'€'+v.max_rent_eur+'/month'}
-🏷 Maximum cold rent: ${v.max_cold_rent_eur==null?'No limit':'€'+v.max_cold_rent_eur+'/month'}
-🧾 Maximum Nebenkosten: ${v.max_charges_eur==null?'No limit':'€'+v.max_charges_eur+'/month'}
-📅 Daily: ${user.rental_daily?'On':'Off'} · 09:00 Europe/Berlin
+      let lang=r.language||user.settings.language||'en';
+      const tr=(en:string,de:string)=>lang==='de'?de:en;
+      const makeRentalButtons=()=>({inline_keyboard:[[button(tr('📍 Area','📍 Ort'),'rentedit:location'),button(tr('📏 Radius','📏 Umkreis'),'rentedit:radius_km')],[button(tr('💵 Max Warmmiete','💵 Max. Warmmiete'),'rentedit:max_rent_eur')],[button(tr('🏷 Max cold rent','🏷 Max. Kaltmiete'),'rentedit:max_cold_rent_eur'),button(tr('🧾 Max Nebenkosten','🧾 Max. Nebenkosten'),'rentedit:max_charges_eur')],[button(tr('🔎 Run rental search','🔎 Mietsuche starten'),'run'),button(tr('📂 Last report','📂 Letzter Bericht'),'last')],[button(tr('📅 Daily on','📅 Täglich an'),'rentdaily:on'),button(tr('Daily off','Täglich aus'),'rentdaily:off')],[button('🇬🇧 English','rentlang:en'),button('🇩🇪 Deutsch','rentlang:de')],[button(tr('🔀 Change service','🔀 Dienst wechseln'),'service')]]} );
+      const rentalButtons=makeRentalButtons();
+      const rentalSummary=(v:any)=>{
+        const limit=(k:string)=>v[k]==null?tr('No limit','Keine Grenze'):'€'+v[k]+tr('/month','/Monat');
+        return tr('🏠 Your rental settings','🏠 Ihre Mietsuche')+`
+📍 ${v.location}, `+tr('Germany','Deutschland')+`
+📏 `+tr('Radius','Umkreis')+`: ${v.radius_km} km
+💵 `+tr('Maximum Warmmiete','Maximale Warmmiete')+`: ${limit('max_rent_eur')}
+🏷 `+tr('Maximum cold rent','Maximale Kaltmiete')+`: ${limit('max_cold_rent_eur')}
+🧾 `+tr('Maximum Nebenkosten','Maximale Nebenkosten')+`: ${limit('max_charges_eur')}
+🌐 `+tr('Language','Sprache')+`: ${lang==='de'?'Deutsch':'English'}
+📅 `+tr('Daily','Täglich')+`: ${user.rental_daily?tr('On','An'):tr('Off','Aus')} · 09:00 Europe/Berlin
 
-Warmmiete includes cold rent and advertised complete charges. These limits are checked separately; they are not added together. Missing components are flagged for verification. Use none to clear a rent limit; keep at least one rent limit. Separate electricity/internet may be extra. Tap a setting to edit it, then Run. /service changes service; /support contacts support.`;
-
+`+tr('Warmmiete includes cold rent and advertised complete charges. These limits are checked separately; they are not added together. Missing components are flagged for verification. Use none to clear a rent limit; keep at least one rent limit. Separate electricity/internet may be extra. Tap a setting to edit it, then Run. First report and pilot access are free; later packages are not available yet. Reports reopen free for seven days. /daily on or off controls daily delivery. /service changes service; /support contacts support.','Warmmiete umfasst Kaltmiete und die angegebenen vollständigen Nebenkosten. Die Grenzen werden separat geprüft und nicht addiert. Fehlende Angaben werden zur Prüfung markiert. Mit none eine Mietgrenze entfernen; mindestens eine Mietgrenze behalten. Strom/Internet können extra kosten. Eine Einstellung antippen, ändern und dann die Suche starten. Erster Bericht und Pilotzugang sind kostenlos; spätere Pakete sind noch nicht verfügbar. Berichte lassen sich sieben Tage kostenlos öffnen. /daily on oder off steuert die tägliche Zustellung. /service wechselt den Dienst; /support kontaktiert den Support.');
+      };
+      if(action.startsWith('rentlang:')||(cmd==='/set'&&parts[0]==='language')) {
+        const choice=action.startsWith('rentlang:')?action.slice(9):parts[1]?.toLowerCase();
+        if(!['en','de'].includes(choice)) { await localizedReply(id,tr('Choose en or de.','Bitte en oder de auswählen.'),rentalButtons);return new Response('ok'); }
+        const changed={...r,language:choice};delete changed._edit;
+        await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:changed,settings:{...user.settings,language:choice}});
+        // Show the new language immediately, including button labels.
+        lang=choice;const localizedButtons=makeRentalButtons();
+        await localizedReply(id,rentalSummary(changed),localizedButtons);return new Response('ok');
+      }
       if(action.startsWith('rentedit:')) {
         const field=action.slice(9);
         if(!['location','radius_km','max_rent_eur','max_cold_rent_eur','max_charges_eur'].includes(field)) throw new Error('Invalid rental setting');
         await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:{...r,_edit:field}});
-        await reply(id,field==='location'?'Send a town or district in Germany.':field==='radius_km'?'Send radius in km (0–300).':'Send your maximum '+(field==='max_rent_eur'?'Warmmiete':field==='max_cold_rent_eur'?'cold rent':'Nebenkosten')+' in euros/month. Send none to clear this limit. Use /cancel to exit.');return new Response('ok');
+        await localizedReply(id,field==='location'?tr('Send a town or district in Germany.','Senden Sie einen Ort oder Stadtteil in Deutschland.'):field==='radius_km'?tr('Send radius in km (0–300).','Senden Sie den Umkreis in km (0–300).'):tr('Send your maximum ','Senden Sie Ihre maximale ')+(field==='max_rent_eur'?'Warmmiete':field==='max_cold_rent_eur'?tr('cold rent','Kaltmiete'):'Nebenkosten')+tr(' in euros/month. Send none to clear this limit. Use /cancel to exit.',' in Euro/Monat. Mit none entfernen, mit /cancel abbrechen.'));return new Response('ok');
       }
       if(cmd==='/cancel') {
-        const clean={...r};delete clean._edit;await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:clean});await reply(id,rentalSummary(clean),rentalButtons);return new Response('ok');
+        const clean={...r};delete clean._edit;await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:clean});await localizedReply(id,rentalSummary(clean),rentalButtons);return new Response('ok');
       }
       if((!cb&&!text.startsWith('/')&&r._edit)||cmd==='/set'||cmd==='/location') {
         const field=cmd==='/location'?'location':cmd==='/set'?parts[0]:r._edit;
         const value=cmd==='/location'?rest:cmd==='/set'?parts.slice(1).join(' '):text;
-        if(!['location','radius_km','max_rent_eur','max_cold_rent_eur','max_charges_eur'].includes(field)) { await reply(id,'Rental fields: location, radius_km, max_rent_eur, max_cold_rent_eur, max_charges_eur.',rentalButtons);return new Response('ok'); }
+        if(!['location','radius_km','max_rent_eur','max_cold_rent_eur','max_charges_eur'].includes(field)) { await localizedReply(id,tr('Rental fields: location, radius_km, max_rent_eur, max_cold_rent_eur, max_charges_eur, language.','Mietfelder: location, radius_km, max_rent_eur, max_cold_rent_eur, max_charges_eur, language.'),rentalButtons);return new Response('ok'); }
         const changed={...r};delete changed._edit;
         if(field==='location') { if(!value.trim()||value.length>100||/[\r\n]/.test(value)) throw new Error('Enter a town in Germany');changed.location=value.trim(); }
-        else if(field!=='radius_km'&&['none','off'].includes(value.trim().toLowerCase())) changed[field]=null;
+        else if(field!=='radius_km'&&['none','off','keine','aus'].includes(value.trim().toLowerCase())) changed[field]=null;
         else { const n=Number(value.replace('€','').trim().replace(',','.'));if(!Number.isFinite(n)||(field==='radius_km'?(n<0||n>300):(n<=0||n>20000))) throw new Error('Invalid rental number');changed[field]=n; }
         if(!['max_rent_eur','max_cold_rent_eur','max_charges_eur'].some(k=>changed[k]!=null)) throw new Error('Keep at least one rent limit');
-        await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:changed});await reply(id,'✅ Updated\n\n'+rentalSummary(changed),rentalButtons);return new Response('ok');
+        await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:changed});await localizedReply(id,tr('✅ Updated\n\n','✅ Aktualisiert\n\n')+rentalSummary(changed),rentalButtons);return new Response('ok');
       }
       if(cmd==='/settings'||cmd==='/guide'||cmd==='/help'||action.startsWith('guide:')) {
-        await reply(id,rentalSummary(r),rentalButtons);return new Response('ok');
+        await localizedReply(id,rentalSummary(r),rentalButtons);return new Response('ok');
       }
       if(cmd==='/daily'||action.startsWith('rentdaily:')) {
         const choice=cmd==='/daily'?rest:action.slice(10);
         if(!['on','off'].includes(choice)) throw new Error('Use /daily on or off');
-        await db('PATCH','bot_users?user_id=eq.'+id,{rental_daily:choice==='on'});await reply(id,'Daily rental delivery '+choice+'. Your allowance and the API spending cap still apply.',rentalButtons);return new Response('ok');
+        await db('PATCH','bot_users?user_id=eq.'+id,{rental_daily:choice==='on'});await localizedReply(id,tr('Daily rental delivery ','Tägliche Mietberichte: ')+choice+tr('. Your allowance and the API spending cap still apply.','. Berichtslimit und API-Budget gelten weiterhin.'),rentalButtons);return new Response('ok');
       }
-      if(cmd==='/buy') { await reply(id,'Rental packages: 1, 5, 10 or 30 days. Prices are not set yet; checkout is closed. Your first report and current pilot access are free.',rentalButtons);return new Response('ok'); }
+      if(cmd==='/buy') { await localizedReply(id,tr('Rental packages: 1, 5, 10 or 30 days. Prices are not set yet; checkout is closed. Your first report and current pilot access are free.','Mietpakete: 1, 5, 10 oder 30 Tage. Preise stehen noch nicht fest; Kauf ist geschlossen. Ihr erster Bericht und Pilotzugang sind kostenlos.'),rentalButtons);return new Response('ok'); }
       if(cmd==='/last'||cmd==='/saved') {
         const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&service=eq.rental&status=eq.complete&report=not.is.null&order=finished_at.desc&limit=1&select=id,report');
-        if(jobs.length) { await sendReport(id,jobs[0].report,'j'+jobs[0].id,'en');await db('PATCH','bot_jobs?id=eq.'+jobs[0].id,{delivered:true});await db('PATCH','bot_users?user_id=eq.'+id+'&rental_trial_used_at=is.null',{rental_trial_used_at:new Date().toISOString()}); }
-        else await reply(id,'No saved rental report. Tap Run for your first free report.',rentalButtons);
+        if(jobs.length) { await sendReport(id,jobs[0].report,'j'+jobs[0].id,lang);await db('PATCH','bot_jobs?id=eq.'+jobs[0].id,{delivered:true});await db('PATCH','bot_users?user_id=eq.'+id+'&rental_trial_used_at=is.null',{rental_trial_used_at:new Date().toISOString()}); }
+        else await localizedReply(id,tr('No saved rental report. Tap Run for your first free report.','Kein gespeicherter Mietbericht. Starten Sie Ihre erste kostenlose Suche.'),rentalButtons);
         return new Response('ok');
       }
       if(cmd==='/run'||cmd==='/refresh') {
-        if(cmd==='/refresh'&&!adminUnlimited) { await reply(id,'Only the administrator can force new paid research.');return new Response('ok'); }
+        if(cmd==='/refresh'&&!adminUnlimited) { await localizedReply(id,tr('Only the administrator can force new paid research.','Nur der Administrator kann neue kostenpflichtige Recherche starten.'));return new Response('ok'); }
         const result=await db('POST','rpc/bot_rental_enqueue',{p_user:id,p_key:(cmd==='/refresh'?'refresh:':'rental:')+update.update_id});
-        if(result.error) await reply(id,'Rental search not started: '+result.error+'. Use /last to reopen a saved report for free.');
-        else if(result.duplicate) await reply(id,'Already recorded; results will arrive here.');
-        else { try { await dispatch(result.job_id);await reply(id,'Rental search queued. Results will arrive here.'); } catch { await reply(id,'Saved in the queue; the scheduled worker will recover it.'); } }
+        if(result.error) await localizedReply(id,tr('Rental search not started: ','Mietsuche nicht gestartet: ')+result.error+tr('. Use /last to reopen a saved report for free.','. Mit /last einen gespeicherten Bericht kostenlos öffnen.'));
+        else if(result.duplicate) await localizedReply(id,tr('Already recorded; results will arrive here.','Bereits erfasst; die Ergebnisse kommen hier an.'));
+        else { try { await dispatch(result.job_id);await localizedReply(id,tr('Rental search queued. Results will arrive here.','Mietsuche eingereiht. Die Ergebnisse kommen hier an.')); } catch { await localizedReply(id,tr('Saved in the queue; the scheduled worker will recover it.','In der Warteschlange gespeichert; der geplante Worker übernimmt die Suche.')); } }
         return new Response('ok');
       }
     }
     if(user.service==='rental'&&(/^pay:/.test(action)||action==='buy')) {
-      await reply(id,'Rental prices are not set; rental checkout is closed. Use /buy for current rental information.');return new Response('ok');
+      await localizedReply(id,'Rental prices are not set; rental checkout is closed. Use /buy for current rental information.');return new Response('ok');
     }
     if(adminUnlimited&&cmd==='/rentalcost') {
       const jobs=await db('GET','bot_jobs?service=eq.rental&select=status,charged_usd,delivered,usage&order=created_at.desc&limit=1000');
@@ -601,7 +674,7 @@ Warmmiete includes cold rent and advertised complete charges. These limits are c
       const total=settled.reduce((sum:number,j:any)=>sum+Number(j.charged_usd),0);
       const delivered=jobs.filter((j:any)=>j.delivered).length;
       const hits=jobs.filter((j:any)=>j.usage?.shared_hit).length;
-      await reply(id,`📊 Rental pilot costs (latest ${jobs.length} runs)
+      await localizedReply(id,`📊 Rental pilot costs (latest ${jobs.length} runs)
 Delivered: ${delivered}
 Shared cache hits: ${hits}
 Failed/uncertain: ${jobs.filter((j:any)=>['failed','uncertain'].includes(j.status)).length}
@@ -612,40 +685,40 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
       return new Response('ok');
     }
     if(cmd==='/terms'||action==='pay:terms') {
-      await reply(id,(billingControl?.payment_terms_text||'Payments are not yet open. The operator’s payment terms will be displayed here before checkout.')+'\n\n'+PAYMENT_GUIDE,
+      await localizedReply(id,(billingControl?.payment_terms_text||'Payments are not yet open. The operator’s payment terms will be displayed here before checkout.')+'\n\n'+PAYMENT_GUIDE,
         billingControl?.payments_enabled&&billingControl?.payment_terms_text?{inline_keyboard:[[{text:'I agree to the payment terms',callback_data:'pay:accept'}]]}:undefined);
       return new Response('ok');
     }
     if(action==='pay:accept') {
-      if(!billingControl?.payments_enabled||!billingControl?.payment_terms_text) { await reply(id,'Payments are not open yet.');return new Response('ok'); }
+      if(!billingControl?.payments_enabled||!billingControl?.payment_terms_text) { await localizedReply(id,'Payments are not open yet.');return new Response('ok'); }
       await db('PATCH','bot_users?user_id=eq.'+id,{payment_terms_version:1});user.payment_terms_version=1;
       await paymentShop(id,user,billingControl,adminUnlimited);return new Response('ok');
     }
     if(cmd==='/buy'||action==='buy'||action==='pay:report'||action==='pay:weekly30') {
-      if(action.startsWith('pay:')&&user.settings._guide_version!==1) { await reply(id,'Complete /guide first. No payment started.');return new Response('ok'); }
+      if(action.startsWith('pay:')&&user.settings._guide_version!==1) { await localizedReply(id,'Complete /guide first. No payment started.');return new Response('ok'); }
       if(action==='pay:report'||action==='pay:weekly30') await paymentInvoice(id,user,billingControl,action.slice(4),adminUnlimited);
       else await paymentShop(id,user,billingControl,adminUnlimited);
       return new Response('ok');
     }
     if(id===admin&&cmd==='/refund') {
-      if(!/^[0-9a-f-]{36}$/.test(rest)) { await reply(id,'Use /refund ORDER_UUID (from /payments).');return new Response('ok'); }
+      if(!/^[0-9a-f-]{36}$/.test(rest)) { await localizedReply(id,'Use /refund ORDER_UUID (from /payments).');return new Response('ok'); }
       const orders=await db('GET','bot_orders?id=eq.'+rest);
-      if(!orders[0]||!['paid','delivered','refund_pending'].includes(orders[0].state)) { await reply(id,'No refundable purchase found.');return new Response('ok'); }
+      if(!orders[0]||!['paid','delivered','refund_pending'].includes(orders[0].state)) { await localizedReply(id,'No refundable purchase found.');return new Response('ok'); }
       const active=orders[0].job_id?await db('GET','bot_jobs?id=eq.'+orders[0].job_id+'&status=in.(queued,running)'):[];
-      if(active.length) { await reply(id,'Wait until the running report finishes before refunding this order.');return new Response('ok'); }
+      if(active.length) { await localizedReply(id,'Wait until the running report finishes before refunding this order.');return new Response('ok'); }
       await db('PATCH','bot_orders?id=eq.'+rest+'&state=in.(paid,delivered,refund_pending)',{state:'refund_pending'});
-      await reply(id,'Full Stars refund queued. Weekly access from that pass will end.');
+      await localizedReply(id,'Full Stars refund queued. Weekly access from that pass will end.');
       try { await dispatch(''); } catch { /* Durable refund remains queued. */ }
       return new Response('ok');
     }
     if(id===admin&&cmd==='/payments') {
-      if(!Object.hasOwn(billingControl||{},'payments_enabled')) { await reply(id,'Apply migration 007 before payment setup.');return new Response('ok'); }
+      if(!Object.hasOwn(billingControl||{},'payments_enabled')) { await localizedReply(id,'Apply migration 007 before payment setup.');return new Response('ok'); }
       const orders=await db('GET','bot_orders?order=created_at.desc&limit=10&select=id,product,amount_stars,state');
-      await reply(id,'Payments: '+(billingControl.payments_enabled?'enabled':'off')+'\nConfigured Stars: '+billingControl.report_price_stars+' per report / '+billingControl.weekly_price_stars+' per 30 days\nCurrent pilot users are exempt.\n'+orders.map((o:any)=>`${o.id} · ${o.product} · ${o.amount_stars} Stars · ${o.state}`).join('\n'));
+      await localizedReply(id,'Payments: '+(billingControl.payments_enabled?'enabled':'off')+'\nConfigured Stars: '+billingControl.report_price_stars+' per report / '+billingControl.weekly_price_stars+' per 30 days\nCurrent pilot users are exempt.\n'+orders.map((o:any)=>`${o.id} · ${o.product} · ${o.amount_stars} Stars · ${o.state}`).join('\n'));
       return new Response('ok');
     }
-    if(user.pilot_locked && (['/set','/location','/areas','/exclude','/schedule','/weekly'].includes(cmd) || /^(menu:|edit:|lang:|day:|weekly:)/.test(action) || (!cb&&!text.startsWith('/')&&user.settings._edit))) {
-      await reply(id,'🔒 Pilot settings and weekly schedule are fixed for all users. Reports are scheduled Monday at 09:00 Europe/Berlin. Use /settings to review the preset or /support for help.');
+    if(user.pilot_locked && !(action.startsWith('lang:')||action==='edit:language'||(cmd==='/set'&&parts[0]==='language')) && (['/set','/location','/areas','/exclude','/schedule','/weekly'].includes(cmd) || /^(menu:|edit:|lang:|day:|weekly:)/.test(action) || (!cb&&!text.startsWith('/')&&user.settings._edit))) {
+      await localizedReply(id,'🔒 Pilot settings and weekly schedule are fixed for all users. Reports are scheduled Monday at 09:00 Europe/Berlin. Use /settings to review the preset or /support for help.');
       return new Response('ok');
     }
     const clearEdit=async()=>{
@@ -658,7 +731,7 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
         await clearEdit();
         await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_guide_version:1}});
         if(billingControl?.notices_enabled) { try { await clearNoticePins(id,'guide',1); } catch { /* Worker retries removal. */ } }
-        await reply(id,user.settings.language==='fa'?'✅ راهنما تکمیل شد. تنظیمات را بررسی کنید؛ برای شروع تحلیل /run را بفرستید.':user.settings.language==='de'?'✅ Anleitung abgeschlossen. Einstellungen prüfen; /run startet eine Analyse.':'✅ Guide completed. Review your settings; send /run when ready to start an analysis.',buttons);
+        await localizedReply(id,user.settings.language==='fa'?'✅ راهنما تکمیل شد. تنظیمات را بررسی کنید؛ برای شروع تحلیل /run را بفرستید.':user.settings.language==='de'?'✅ Anleitung abgeschlossen. Einstellungen prüfen; /run startet eine Analyse.':'✅ Guide completed. Review your settings; send /run when ready to start an analysis.',buttons);
         return new Response('ok');
       }
       const requested=cmd==='/guide'?0:action==='guide:resume'||action==='guide:complete'?(user.settings._guide_step??0):Number(action.slice(6));
@@ -666,7 +739,7 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
       const guide=setupGuide(chosen,user.settings.language,user);
       await clearEdit();
       await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_guide_step:chosen,_guide_seen:Math.max(seen,chosen)}});
-      await reply(id,guide.text,guide.keyboard);
+      await localizedReply(id,guide.text,guide.keyboard);
       return new Response('ok');
     }
     if (user.accepted_at && /^(prop|list|notes):/.test(action)) {
@@ -681,7 +754,8 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
         const stored=await db('POST','rpc/bot_saved_report',{p_user:id});
         if(stored?.report && 's'+await reportHash(stored.report)===source) report=stored.report;
       }
-      if(!report) { await reply(id,'This report is no longer available. Use /last or /saved.'); return new Response('ok'); }
+      if(!report) { await localizedReply(id,'This report is no longer available. Use /last or /saved.'); return new Response('ok'); }
+      report=rentalReportLanguage(report,user.rental_settings?.language||user.settings.language);
       const view=splitReport(report);const index=Number(rawIndex);
       let display:string;let displayEntities:any[]=[];
       if(kind==='list') { const page=reportPage(view,source,index,user.settings.language);display=page.text;displayEntities=page.entities; }
@@ -694,18 +768,18 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
       }
       if(message.text===display) return new Response('ok');
       if(cb&&display.length<=3800&&message.message_id) await tg('editMessageText',{chat_id:id,message_id:message.message_id,text:display,entities:displayEntities,reply_markup:{inline_keyboard:[]},link_preview_options:{is_disabled:true}});
-      else await reply(id,display,undefined,displayEntities);
+      else await localizedReply(id,display,undefined,displayEntities);
       return new Response('ok');
     }
     if (user.accepted_at && (cmd==='/cancel'||action==='cancel')) {
-      await clearEdit(); await reply(id,'Edit cancelled. Your settings are unchanged.',settingsButtons); return new Response('ok');
+      await clearEdit(); await localizedReply(id,'Edit cancelled. Your settings are unchanged.',settingsButtons); return new Response('ok');
     }
     if (user.accepted_at && action.startsWith('menu:')) {
       await clearEdit(); const group=action.slice(5);
       let keyboard:any;
       if (group==='exclude') {
         keyboard={inline_keyboard:[...['Erbpacht','Zwangsversteigerung'].map(x=>[button((user.settings.exclude.includes(x)?'☑️ ':'⬜ ')+(x==='Erbpacht'?'Exclude leasehold':'Exclude foreclosure auctions'),'toggle:'+x)]),[button('← My settings','settings')]]};
-        await reply(id,'🚫 Exclusions\nTap an item to turn its exclusion on or off.',keyboard);
+        await localizedReply(id,'🚫 Exclusions\nTap an item to turn its exclusion on or off.',keyboard);
       } else if (GROUPS[group]) {
         const rows=GROUPS[group].map(f=>[button(LABELS[f],'edit:'+f)]);
         if (group==='schedule') {
@@ -713,50 +787,50 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
           rows.push([button(user.weekly?'Turn weekly reports off':'Turn weekly reports on',user.weekly?'weekly:off':'weekly:on')]);
         }
         rows.push([button('← My settings','settings')]);
-        await reply(id,'Choose the setting to change:',{inline_keyboard:rows});
-      } else await reply(id,'Open /settings to choose a setting.',settingsButtons);
+        await localizedReply(id,'Choose the setting to change:',{inline_keyboard:rows});
+      } else await localizedReply(id,'Open /settings to choose a setting.',settingsButtons);
       return new Response('ok');
     }
     if (user.accepted_at && action==='days') {
-      await clearEdit(); await reply(id,'Choose your delivery day:',{inline_keyboard:[...DAYS.map((d,i)=>[button(d,'day:'+i)]),[button('← My settings','settings')]]}); return new Response('ok');
+      await clearEdit(); await localizedReply(id,'Choose your delivery day:',{inline_keyboard:[...DAYS.map((d,i)=>[button(d,'day:'+i)]),[button('← My settings','settings')]]}); return new Response('ok');
     }
     if (user.accepted_at && /^(day:|weekly:|toggle:)/.test(action)) {
       await clearEdit();
       if (action.startsWith('day:')) {
         const day=Number(action.slice(4)); if (!Number.isInteger(day)||day<0||day>6) throw new Error('Invalid day');
         await db('PATCH','bot_users?user_id=eq.'+id,{schedule_day:day});
-        await reply(id,'✅ Delivery day saved: '+DAYS[day],settingsButtons);
+        await localizedReply(id,'✅ Delivery day saved: '+DAYS[day],settingsButtons);
       } else if (action.startsWith('weekly:')) {
         if (!['weekly:on','weekly:off'].includes(action)) throw new Error('Invalid choice');
         await db('PATCH','bot_users?user_id=eq.'+id,{weekly:action==='weekly:on'});
-        await reply(id,'✅ Weekly reports '+(action==='weekly:on'?'on':'off')+'. Scheduled reports count toward your weekly allowance.',settingsButtons);
+        await localizedReply(id,'✅ Weekly reports '+(action==='weekly:on'?'on':'off')+'. Scheduled reports count toward your weekly allowance.',settingsButtons);
       } else {
         const item=action.slice(7); if (!['Erbpacht','Zwangsversteigerung'].includes(item)) throw new Error('Invalid exclusion');
         const list=user.settings.exclude.includes(item)?user.settings.exclude.filter((x:string)=>x!==item):[...user.settings.exclude,item];
         await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,exclude:list}});
-        await reply(id,'✅ Exclusions updated. Open Exclusions again to see current choices.',settingsButtons);
+        await localizedReply(id,'✅ Exclusions updated. Open Exclusions again to see current choices.',settingsButtons);
       }
       return new Response('ok');
     }
     if (user.accepted_at && action.startsWith('edit:')) {
       const field=action.slice(5); if (!LABELS[field]) throw new Error('Invalid edit field');
       if (field==='language') {
-        await clearEdit(); await reply(id,'Choose your report language:',{inline_keyboard:[[button('English','lang:en'),button('Deutsch','lang:de'),button('فارسی','lang:fa')],[button('Cancel','cancel')]]});
+        await clearEdit(); await localizedReply(id,'Choose your report language:',{inline_keyboard:[[button('English','lang:en'),button('Deutsch','lang:de'),button('فارسی','lang:fa')],[button('Cancel','cancel')]]});
       } else {
         await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_edit:{field,at:Date.now()}}});
-        await reply(id,editPrompt(field),{inline_keyboard:[[button('Cancel','cancel')]]});
+        await localizedReply(id,editPrompt(field),{inline_keyboard:[[button('Cancel','cancel')]]});
       }
       return new Response('ok');
     }
     if (user.accepted_at && action.startsWith('lang:')) {
       const language=parseEdit('language',action.slice(5)); await clearEdit();
       await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,language}});
-      await reply(id,'✅ Report language saved: '+(language==='fa'?'فارسی':language==='en'?'English':'German'),settingsButtons); return new Response('ok');
+      await localizedReply(id,'✅ Report language saved: '+(language==='fa'?'فارسی':language==='en'?'English':'German'),settingsButtons); return new Response('ok');
     }
     if (user.accepted_at && !cb && !text.startsWith('/') && user.settings._edit) {
       const pending=user.settings._edit;
       if (Date.now()-pending.at>15*60*1000 || !LABELS[pending.field]) {
-        await clearEdit(); await reply(id,'This edit expired. Open /settings and choose the field again.',settingsButtons);
+        await clearEdit(); await localizedReply(id,'This edit expired. Open /settings and choose the field again.',settingsButtons);
       } else {
         try {
           const value=parseEdit(pending.field,text);
@@ -767,9 +841,9 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
             if (pending.field==='location') { settings.areas=[]; settings.country='Germany'; }
             await db('PATCH','bot_users?user_id=eq.'+id,{settings});
           }
-          await reply(id,'✅ '+LABELS[pending.field]+' saved: '+(value===null?'No filter':Array.isArray(value)?value.join(', ')||'None':value),settingsButtons);
+          await localizedReply(id,'✅ '+LABELS[pending.field]+' saved: '+(value===null?'No filter':Array.isArray(value)?value.join(', ')||'None':value),settingsButtons);
         } catch(e) {
-          await reply(id,e instanceof Error?e.message:'Could not save. Try again.',{inline_keyboard:[[button('Cancel','cancel')]]});
+          await localizedReply(id,e instanceof Error?e.message:'Could not save. Try again.',{inline_keyboard:[[button('Cancel','cancel')]]});
         }
       }
       return new Response('ok');
@@ -780,56 +854,56 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
     // except /support which gets a dedicated unique update record.
     if (cmd==='/start' || cmd==='/disclaimer') {
       const updated=Boolean(billingControl?.agreement_text);
-      await reply(id,updated?billingControl.agreement_text:NOTICE,{inline_keyboard:[[{text:'I understand and accept — continue',callback_data:updated?'agreement:'+billingControl.agreement_version:'accept'}]]});
+      await localizedReply(id,updated?billingControl.agreement_text:NOTICE,{inline_keyboard:[[{text:'I understand and accept — continue',callback_data:updated?'agreement:'+billingControl.agreement_version:'accept'}]]});
     } else if (cmd==='/accept') {
       if(billingControl?.agreement_text&&Number(billingControl.agreement_version)>1) {
-        await reply(id,billingControl.agreement_text,{inline_keyboard:[[button('I have read and accept','agreement:'+billingControl.agreement_version)]]});return new Response('ok');
+        await localizedReply(id,billingControl.agreement_text,{inline_keyboard:[[button('I have read and accept','agreement:'+billingControl.agreement_version)]]});return new Response('ok');
       }
       await db('PATCH','bot_users?user_id=eq.'+id,{accepted_at:new Date().toISOString(),...(billingControl?.agreement_version?{agreement_version_accepted:billingControl.agreement_version}:{})});
-      await reply(id,'Which service would you like?',services);
+      await localizedReply(id,ui('Which service would you like?','Welchen Dienst möchten Sie nutzen?'),services);
     } else if (cmd==='/help') {
-      await reply(id,(user.settings.language==='fa'?HELP_FA:HELP).replace(user.payments_active?'Free: 1 report/week. Paid: up to 7. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. Manual membership during pilot.':'__unused__',user.payments_active?'Paid reports are purchased individually; the 30-day pass covers weekly deliveries.':'')+(user.payments_active?'\n\n'+PAYMENT_GUIDE:'')+'\n\n'+(user.settings.language==='fa'?CALCULATIONS_FA:user.settings.language==='de'?CALCULATIONS_DE:CALCULATIONS_EN),buttons);
+      await localizedReply(id,(user.settings.language==='fa'?HELP_FA:user.settings.language==='de'?HELP_DE:HELP).replace(user.payments_active?'Free: 1 report/week. Paid: up to 7. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. Manual membership during pilot.':'__unused__',user.payments_active?'Paid reports are purchased individually; the 30-day pass covers weekly deliveries.':'')+(user.payments_active?'\n\n'+PAYMENT_GUIDE:'')+'\n\n'+(user.settings.language==='fa'?CALCULATIONS_FA:user.settings.language==='de'?CALCULATIONS_DE:CALCULATIONS_EN),buttons);
     } else if (cmd==='/support'||cmd==='/paysupport') {
-      if (!rest) await reply(id,'Send /support followed by your question. It is forwarded to the administrator; no AI charge. Response is manual.');
+      if (!rest) await localizedReply(id,'Send /support followed by your question. It is forwarded to the administrator; no AI charge. Response is manual.');
       else {
         const existing = await db('GET','bot_updates?update_id=eq.'+Number(update.update_id));
         if (!existing.length) {
           await reply(admin,'📩 Support from Telegram ID '+id+'\n'+rest);
           await db('POST','bot_updates',{update_id:Number(update.update_id)});
         }
-        await reply(id,'Your question was sent to the administrator. Response is manual, not immediate.');
+        await localizedReply(id,'Your question was sent to the administrator. Response is manual, not immediate.');
       }
     } else if (id===admin && cmd==='/channel') {
       if (!['on','off'].includes(rest)) throw new Error('Use /channel on|off');
       await db('PATCH','bot_control?id=eq.1',{channel_enabled:rest==='on'});
-      await reply(id,'Channel posting '+rest+'. Only your reports are shared; configure CHANNEL_ID in GitHub secrets and grant the bot posting permission.');
+      await localizedReply(id,'Channel posting '+rest+'. Only your reports are shared; configure CHANNEL_ID in GitHub secrets and grant the bot posting permission.');
     } else if (id===admin && cmd==='/cost') {
       const month=new Date().toISOString().slice(0,7)+'-01T00:00:00Z';
       const jobs=await db('GET','bot_jobs?created_at=gte.'+month+'&select=charged_usd,reserved_usd,status');
       const total=jobs.reduce((s:number,j:any)=>s+Number(j.charged_usd??j.reserved_usd),0);
       const control=(await db('GET','bot_control?id=eq.1'))[0];
-      await reply(id,`Monthly estimates/reservations: $${total.toFixed(2)} / $${control.monthly_budget_usd}\nUnknown usage: ${jobs.filter((j:any)=>j.status==='uncertain').length}. Reconcile with OpenAI billing; taxes/FX/hosting separate.`);
+      await localizedReply(id,`Monthly estimates/reservations: $${total.toFixed(2)} / $${control.monthly_budget_usd}\nUnknown usage: ${jobs.filter((j:any)=>j.status==='uncertain').length}. Reconcile with OpenAI billing; taxes/FX/hosting separate.`);
     } else if (id===admin && ['/approve','/plan','/reply'].includes(cmd)) {
       const target = Number(parts[0]);
       if (!Number.isSafeInteger(target) || target<=0) throw new Error('Invalid user ID');
       if (cmd==='/approve') {
         const known = await db('GET','bot_users?user_id=eq.'+target);
         await db(known.length?'PATCH':'POST',known.length?'bot_users?user_id=eq.'+target:'bot_users',{user_id:target,approved:true});
-        await reply(id,'User approved. They must /start and accept the notice.');
+        await localizedReply(id,'User approved. They must /start and accept the notice.');
       } else if (cmd==='/plan') {
         if (!['free','paid'].includes(parts[1])) throw new Error('Use /plan ID free|paid');
         const result = await db('PATCH','bot_users?user_id=eq.'+target,{plan:parts[1]});
-        await reply(id,result.length?'Membership updated.':'User not found.');
+        await localizedReply(id,result.length?'Membership updated.':'User not found.');
       } else {
         const known = await db('GET','bot_users?user_id=eq.'+target+'&approved=eq.true');
         if (!known.length || !parts.slice(1).join(' ')) throw new Error('Use /reply APPROVED_USER_ID MESSAGE');
         await reply(target,'Support reply:\n'+parts.slice(1).join(' '));
-        await reply(id,'Reply sent.');
+        await localizedReply(id,'Reply sent.');
       }
     } else if (!user.accepted_at) {
-      await reply(id,'Please /start and accept the notice first.');
+      await localizedReply(id,'Please /start and accept the notice first.');
     } else if (cmd==='/settings') {
-      await reply(id,settingsSummary(user),user.pilot_locked?{inline_keyboard:[[button('📖 Guide','guide:resume'),button('❓ Help','help')],[button('📂 Saved report','saved'),button('🔎 Run analysis','run')]]}:settingsButtons);
+      await localizedReply(id,settingsSummary(user),user.pilot_locked?{inline_keyboard:[[button('🌐 Language','edit:language')],[button('📖 Guide','guide:resume'),button('❓ Help','help')],[button('📂 Saved report','saved'),button('🔎 Run analysis','run')]]}:settingsButtons);
     } else if (cmd==='/set' || cmd==='/location' || cmd==='/areas' || cmd==='/exclude') {
       const settings = {...user.settings};
       if (cmd==='/location') {
@@ -852,17 +926,17 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
         }
       }
       await db('PATCH','bot_users?user_id=eq.'+id,{settings});
-      await reply(id,'Settings saved. Germany only during pilot.');
+      await localizedReply(id,'Settings saved. Germany only during pilot.');
     } else if (cmd==='/schedule') {
       const day=['mon','tue','wed','thu','fri','sat','sun'].indexOf(parts[0]?.toLowerCase());
       if (parts.length!==3 || day<0 || !/^([01]\d|2[0-3]):[0-5]\d$/.test(parts[1])) throw new Error('Use /schedule mon 08:00 Europe/Berlin');
       try { new Intl.DateTimeFormat('en',{timeZone:parts[2]}).format(); } catch { throw new Error('Invalid timezone'); }
       await db('PATCH','bot_users?user_id=eq.'+id,{schedule_day:day,schedule_time:parts[1],timezone:parts[2]});
-      await reply(id,'Schedule saved. Delivery is checked hourly and may be delayed. Use /weekly on to enable.');
+      await localizedReply(id,'Schedule saved. Delivery is checked hourly and may be delayed. Use /weekly on to enable.');
     } else if (cmd==='/weekly') {
       if (!['on','off'].includes(rest)) throw new Error('Use /weekly on|off');
       await db('PATCH','bot_users?user_id=eq.'+id,{weekly:rest==='on'});
-      await reply(id,'Weekly reports '+rest+(adminUnlimited?'. Your administrator account has no weekly report limit.':'. They count toward your quota.'));
+      await localizedReply(id,'Weekly reports '+rest+(adminUnlimited?'. Your administrator account has no weekly report limit.':'. They count toward your quota.'));
     } else if (cmd==='/quota') {
       // SQL uses server-side Berlin week reset. Fetch latest jobs, calculate with Berlin date.
       const local = new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Berlin',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
@@ -871,51 +945,51 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
       const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&week_start=eq.'+week+'&select=status,charged_usd,usage');
       const used=jobs.filter((j:any)=>j.usage?.shared_hit!==true&&(j.status!=='failed'||Number(j.charged_usd)>0)).length;
       if(user.payments_active) { await paymentShop(id,user,billingControl,adminUnlimited);return new Response('ok'); }
-      await reply(id,adminUnlimited?`Administrator: no weekly report limit.\nReports this week: ${used}.\nMonthly spending cap and one active analysis at a time still apply.`:`Plan: ${user.plan}\nUsed: ${used} / ${user.plan==='paid'?7:1} this week. Reset Monday 00:00 Europe/Berlin.`);
+      await localizedReply(id,adminUnlimited?`Administrator: no weekly report limit.\nReports this week: ${used}.\nMonthly spending cap and one active analysis at a time still apply.`:`Plan: ${user.plan}\nUsed: ${used} / ${user.plan==='paid'?7:1} this week. Reset Monday 00:00 Europe/Berlin.`);
     } else if (cmd==='/last') {
       const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&service=eq.investment&status=eq.complete&order=finished_at.desc&limit=1&select=id,report');
       if(jobs.length) await sendReport(id,jobs[0].report,'j'+jobs[0].id,user.settings.language);
-      else await reply(id,'No completed report yet.');
+      else await localizedReply(id,'No completed report yet.');
     } else if (cmd==='/run'||cmd==='/saved'||cmd==='/refresh') {
       if(cmd!=='/saved' && user.settings._guide_version!==1) {
         const step=Math.max(0,Math.min(6,Number(user.settings._guide_step??0)));
         const guide=setupGuide(step,user.settings.language,user);
         await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_guide_seen:Math.max(Number(user.settings._guide_seen??-1),step)}});
-        await reply(id,guide.text,guide.keyboard); return new Response('ok');
+        await localizedReply(id,guide.text,guide.keyboard); return new Response('ok');
       }
       const refresh=cmd==='/refresh';
-      if (refresh && id!==admin) { await reply(id,'Only the administrator can start additional paid research.'); return new Response('ok'); }
+      if (refresh && id!==admin) { await localizedReply(id,'Only the administrator can start additional paid research.'); return new Response('ok'); }
       const control=(await db('GET','bot_control?id=eq.1'))[0];
       if (control?.shared_reports_enabled && !refresh) {
         const saved=await db('POST','rpc/bot_saved_report',{p_user:id});
         if (saved?.report) {
-          await reply(id,'📂 Saved report for your current settings. No quota used and no new AI research.');
+          await localizedReply(id,'📂 Saved report for your current settings. No quota used and no new AI research.');
           await sendReport(id,saved.report,'s'+await reportHash(saved.report),user.settings.language); return new Response('ok');
         }
       }
       if (cmd==='/saved') {
-        await reply(id,'No current shared report matches your exact settings. /last shows your previous report for free; /run can create a new personalised report within your allowance.');
+        await localizedReply(id,'No current shared report matches your exact settings. /last shows your previous report for free; /run can create a new personalised report within your allowance.');
         return new Response('ok');
       }
       if (!control?.research_v2) {
-        await reply(id,'Analysis paused until the cost-saving upgrade is activated. No paid run started. Use /last for your saved report.');
+        await localizedReply(id,'Analysis paused until the cost-saving upgrade is activated. No paid run started. Use /last for your saved report.');
         return new Response('ok');
       }
       const result=await db('POST','rpc/bot_enqueue',{p_user:id,p_key:(refresh?'refresh:':'telegram:')+update.update_id});
       if (result.error==='payment_required') await paymentShop(id,user,control,adminUnlimited);
-      else if (result.error) await reply(id,'Analysis not started: '+result.error+'. Use /support if you need help.');
-      else if (result.duplicate) await reply(id,'This request is already recorded. Use /last for the latest report.');
+      else if (result.error) await localizedReply(id,'Analysis not started: '+result.error+'. Use /support if you need help.');
+      else if (result.duplicate) await localizedReply(id,'This request is already recorded. Use /last for the latest report.');
       else {
-        try { await dispatch(result.job_id); await reply(id,refresh?'Additional paid research queued within the monthly cap. Saved apartments will be retained.':'Analysis queued. Results will arrive here; GitHub may take a few minutes.'); }
-        catch { await reply(id,'Request saved but immediate dispatch failed. The scheduled worker can recover it.'); await reply(admin,'⚠️ Dispatch failed. Job '+result.job_id); }
+        try { await dispatch(result.job_id); await localizedReply(id,refresh?'Additional paid research queued within the monthly cap. Saved apartments will be retained.':'Analysis queued. Results will arrive here; GitHub may take a few minutes.'); }
+        catch { await localizedReply(id,'Request saved but immediate dispatch failed. The scheduled worker can recover it.'); await reply(admin,'⚠️ Dispatch failed. Job '+result.job_id); }
       }
-    } else await reply(id,'Use /help for commands.',buttons);
+    } else await localizedReply(id,'Use /help for commands.',buttons);
     return new Response('ok');
   } catch {
     // No request payloads, secrets or financial settings in function logs.
     if (replyTo) {
       try {
-        await reply(replyTo,'Could not process the request. Check syntax with /help, or /support your question. If already queued, do not repeatedly press Run.');
+        await reply(replyTo,replyLanguage==='de'?'Anfrage konnte nicht verarbeitet werden. Mit /help die Eingabe prüfen oder /support und Ihre Frage senden. Wenn die Suche schon eingereiht ist, nicht wiederholt starten.':'Could not process the request. Check syntax with /help, or /support your question. If already queued, do not repeatedly press Run.');
         return new Response('ok');
       } catch { /* Telegram retries only if even the error reply cannot be delivered. */ }
     }

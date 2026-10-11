@@ -15,7 +15,7 @@ def split_report(report):
         urls=re.findall(r'https?://\S+',lines[-1])
         if not urls: return {'header':report,'cards':[],'notes':''}
         brief=[lines[0]]
-        for prefix in ('📍','🏷','📐','💵','🏦','💳','📈'):
+        for prefix in ('📍','🏷','🧾','📐','💵','🏦','💳','📈'):
             brief.extend(line for line in lines if line.startswith(prefix))
         cards.append({'detail':block,'brief':'\n'.join(brief),'url':urls[-1]})
     return {'header':report[:headings[0].start()].strip(),'cards':cards,'notes':report[notes_start:].strip()}
@@ -38,7 +38,7 @@ def page(view,source,index,language='en',username='MeHousingLoanBot'):
             'de':('Details','Anzeige','Zinsen & Annahmen','Seite'),
             'fa':('جزئیات','آگهی','نرخ بهره و فرض‌ها','صفحه')}
     detail,listing,notes,page_label=labels.get(language,labels['en'])
-    if '🏠 Rental apartments' in view['header']: notes='Rent & search notes'
+    if any(x in view['header'] for x in ('🏠 Rental apartments','🏠 Mietwohnungen')): notes='Miete & Suchhinweise' if language=='de' else 'Rent & search notes'
     total=(len(view['cards'])+PAGE_SIZE-1)//PAGE_SIZE
     if not 0<=index<total: raise ValueError('Invalid report page')
     text=view['header']+'\n'+f'{page_label} {index+1}/{total}'

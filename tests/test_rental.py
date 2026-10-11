@@ -30,6 +30,17 @@ class RentalTests(unittest.TestCase):
         self.assertEqual(len(matching([self.item(charges_eur=None)],s)[1]),1)
         self.assertEqual(matching([self.item(charges_eur=250)],s),([],[]))
         self.assertIn('Nebenkosten: €150',render([self.item()],s,'today',{}))
+    def test_german_report_and_language_independent_cache(self):
+        from rental import translate_report
+        item=self.item(title='Original title')
+        report=render([item],{**self.settings(),'language':'de'},'today',{})
+        self.assertIn('Mietwohnungen',report);self.assertIn('Kaltmiete: €750',report)
+        self.assertIn('Original title',report);self.assertIn('Nebenkosten: €150',report)
+        self.assertIn('Nur zur Information',report)
+        back=translate_report(report,'en');self.assertIn('Cold rent: €750',back)
+        view=split_report(report);text,_=page(view,'j00000000-0000-0000-0000-000000000000',0,'de')
+        self.assertIn('Miete & Suchhinweise',text)
+
     def test_all_matches_paginate_without_cap(self):
         items=[self.item(url=f'https://example.org/rent/{n}') for n in range(28)]
         text=render(items,self.settings(),'2026-10-05',{'new':28})

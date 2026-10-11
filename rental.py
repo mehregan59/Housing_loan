@@ -64,6 +64,23 @@ def matching(items,s):
 
 def money(value): return 'Missing data' if value is None else f'€{value:,.0f}'
 
+RENT_TRANSLATIONS = [('🏠 Rental apartments —', '🏠 Mietwohnungen —'), ('Germany · within', 'Deutschland · im Umkreis von'), ('maximum Warmmiete', 'maximale Warmmiete'), ('/month', '/Monat'), ('No limit', 'Keine Grenze'), ('Checked:', 'Geprüft:'), ('within verified limits;', 'innerhalb bestätigter Grenzen;'), ('provisional (rent or distance unverified).', 'vorläufig (Miete oder Entfernung nicht bestätigt).'), ('Search coverage is limited; this is not an exhaustive market search.', 'Die Suche deckt nur einen Teil des Marktes ab; sie ist nicht vollständig.'), ('New verified listings:', 'Neue bestätigte Anzeigen:'), ('retained total:', 'insgesamt gespeichert:'), ('⚠️ Partial rental research:', '⚠️ Unvollständige Mietrecherche:'), ('Collection stages:', 'Suchschritte:'), ('Total monthly rent:', 'Warmmiete:'), ('Cold rent:', 'Kaltmiete:'), ('Size:', 'Wohnfläche:'), ('Available:', 'Verfügbar ab:'), ('Deposit:', 'Kaution:'), ('Listing:', 'Anzeige:'), ('Missing data', 'Fehlende Angabe'), ('Missing total rent', 'Warmmiete fehlt'), ('advertised Warmmiete', 'angegebene Warmmiete'), ('calculated from advertised cold rent + complete charges', 'aus angegebener Kaltmiete + vollständigen Nebenkosten berechnet'), ('total monthly rent missing — budget compliance unverified', 'Warmmiete fehlt — Budgeteinhaltung nicht bestätigt'), ('distance unverified — radius compliance unverified', 'Entfernung nicht bestätigt — Umkreis nicht bestätigt'), ('total missing — selected limit unverified', 'Warmmiete fehlt — ausgewählte Grenze nicht bestätigt'), ('cold rent missing — selected limit unverified', 'Kaltmiete fehlt — ausgewählte Grenze nicht bestätigt'), ('Nebenkosten missing — selected limit unverified', 'Nebenkosten fehlen — ausgewählte Grenze nicht bestätigt'), ('Confirm availability, lease and all charges with the landlord.', 'Verfügbarkeit, Mietvertrag und alle Kosten beim Vermieter bestätigen lassen.'), ('💶 RENT & SEARCH NOTES', '💶 MIETE & SUCHHINWEISE'), ('Warmmiete is the advertised total housing rent. Electricity, internet or other separately paid charges may be extra. Missing charges are never treated as zero. Provisional listings may exceed your budget or radius. Availability is not guaranteed; contact the landlord.', 'Warmmiete ist die angegebene Gesamtmiete. Separat gezahlter Strom, Internet oder andere Kosten können hinzukommen. Fehlende Kosten gelten niemals als null. Vorläufige Anzeigen können Budget oder Umkreis überschreiten. Verfügbarkeit ist nicht garantiert; kontaktieren Sie den Vermieter.'), ('Public listing data is removed after seven days.', 'Öffentliche Anzeigendaten werden nach sieben Tagen gelöscht.'), ('Information only; verify the listing and lease independently.', 'Nur zur Information; Anzeige und Mietvertrag selbstständig prüfen.')]
+
+def translate_report(text, language):
+    if language not in ('en','de'): language='en'
+    translations=sorted(RENT_TRANSLATIONS,key=lambda p:len(p[0] if language=='de' else p[1]),reverse=True)
+    result=[]
+    for line in text.split('\n'):
+        if line.startswith(('🏠 — ','📍 ')) and 'Germany · within' not in line and 'Deutschland · im Umkreis von' not in line:
+            result.append(line);continue
+        # Free-text facts from listing descriptions remain verbatim.
+        if line.startswith(('⚠️ ', '🗓 ', '🔐 ')) and not any(a in line or b in line for a,b in RENT_TRANSLATIONS):
+            result.append(line);continue
+        for en,de in translations:
+            line=line.replace(en,de) if language=='de' else line.replace(de,en)
+        result.append(line)
+    return '\n'.join(result)
+
 def render(items,s,checked,stats):
     matches,provisional=matching(items,s)
     header=f"🏠 Rental apartments — {s['location']}\n📍 Germany · within {s['radius_km']} km · maximum Warmmiete {money(s.get('max_rent_eur')) if s.get('max_rent_eur') is not None else 'No limit'}/month\nChecked: {checked}\n{len(matches)} within verified limits; {len(provisional)} provisional (rent or distance unverified).\nSearch coverage is limited; this is not an exhaustive market search.\nNew verified listings: {stats.get('new',0)} · retained total: {len(items)}"
@@ -76,7 +93,7 @@ def render(items,s,checked,stats):
         if market.location_norm(x['town'])!=market.location_norm(s['location']) and x['distance'] is None: checks.append('distance unverified — radius compliance unverified')
         blocks.append('\n'.join([f"🏠 — {x['title']}",f"📍 {x['town']}"+(f" · ~{x['distance']:.1f} km" if x['distance'] is not None else ''),f"💵 Total monthly rent: {money(x['total'])} · {x['basis']}",f"🏷 Cold rent: {money(x.get('cold_rent_eur'))}/month",f"🧾 Nebenkosten: {money(x.get('charges_eur'))}/month",f"📐 Size: {x.get('size_m2') or 'Missing data'} m²",f"🗓 Available: {x.get('available_from') or 'Missing data'}",f"🔐 Deposit: {x.get('deposit') or 'Missing data'}",f"⚠️ {'; '.join(checks) or x.get('risk') or 'Confirm availability, lease and all charges with the landlord.'}",f"🔗 Listing: {x['url']}"]))
     notes='💶 RENT & SEARCH NOTES\nWarmmiete is the advertised total housing rent. Electricity, internet or other separately paid charges may be extra. Missing charges are never treated as zero. Provisional listings may exceed your budget or radius. Availability is not guaranteed; contact the landlord.\nPublic listing data is removed after seven days.\nInformation only; verify the listing and lease independently.'
-    return header+'\n\n'+'\n\n'.join(blocks)+'\n\n'+notes
+    return translate_report(header+'\n\n'+'\n\n'.join(blocks)+'\n\n'+notes,s.get('language','en'))
 
 def analyse(db,job,meter):
     from openai import OpenAI
