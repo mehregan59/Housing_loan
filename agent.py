@@ -183,6 +183,13 @@ def sources_from(response):
     return urls
 
 
+def scheduled_pilot(user):
+    """Existing approved/consenting pilots can receive automatic investment reports."""
+    return (user.get('pilot_free') is True and user.get('approved') is True
+            and bool(user.get('accepted_at')) and user.get('weekly') is True
+            and user.get('service','investment')=='investment')
+
+
 def run_job(db, job_id):
     job = db.rpc('bot_claim', {'p_id': job_id})
     if not job:
@@ -197,7 +204,12 @@ def run_job(db, job_id):
     try:
         if job.get('research_v2'):
             if job['settings'].get('_guide_version') != 1:
-                raise GuideRequired()
+                requests=db.request('GET','bot_jobs?id=eq.'+job_id+'&select=request_key')
+                scheduled=(bool(requests) and requests[0].get('request_key','').startswith('schedule:'+str(job['user_id'])+':') and job.get('service','investment')=='investment')
+                users=db.request('GET','bot_users?user_id=eq.'+str(job['user_id'])) if scheduled else []
+                if not users or not scheduled_pilot(users[0]):
+                    raise GuideRequired()
+                # Keep the guide unread; manual searches still require it.
             if job.get("service")=="rental":
                 from rental import analyse
             else:
@@ -292,6 +304,8 @@ def sweep(db):
     if 'payments_enabled' in control:
         from payments import process_refunds
         process_refunds(db)
+    from notices import sweep_notices
+    sweep_notices(db,control)
     if not control['enabled']:
         return
     now = datetime.now(timezone.utc)
@@ -303,7 +317,7 @@ def sweep(db):
     for user in db.request('GET', 'bot_users?approved=eq.true&weekly=eq.true'):
         if user.get('service','investment')!='investment':
             continue
-        if user.get('settings',{}).get('_guide_version') != 1:
+        if user.get('settings',{}).get('_guide_version') != 1 and not scheduled_pilot(user):
             continue
         slot = due_slot(user, now)
         if slot:

@@ -379,3 +379,21 @@ renter.accepted_at=null;renter.service_selected=false;
 await sendAs(456,'/accept');assert.match(messages.at(-1).text,/Which service/);assert.equal(messages.at(-1).reply_markup.inline_keyboard.length,2);
 await sendAs(456,'/run');assert.match(messages.at(-1).text,/First choose your service/);
 console.log('Rental service choice, free-preview fallback, separate editing and closed checkout passed');
+
+// Agreement updates require the exact current version and unpin only owned notices.
+let agreementUser={...renter,accepted_at:'2026-10-05',service:'investment',service_selected:true,agreement_version_accepted:1,settings:{...renter.settings,_guide_version:1}};
+const agreementCalls=[];
+globalThis.fetch=async(url,options={})=>{
+  const body=options.body?JSON.parse(options.body):{};agreementCalls.push({url,body});
+  if(url.startsWith('https://api.telegram.org/')) { if(url.endsWith('/sendMessage')) messages.push(body);return Response.json({ok:true}); }
+  if(url.startsWith('https://db.test/rest/v1/bot_control')) return Response.json([{agreement_version:2,agreement_text:'Updated terms',notices_enabled:true}]);
+  if(url.startsWith('https://db.test/rest/v1/bot_notices')) return Response.json(options.method==='GET'?[{kind:'agreement',version:2,message_id:777}]:[]);
+  if(url.startsWith('https://db.test/rest/v1/bot_users')) { if(options.method==='PATCH') agreementUser={...agreementUser,...body};return Response.json([structuredClone(agreementUser)]); }
+  throw new Error('Unexpected agreement endpoint');
+};
+await sendAs(456,'agreement:1',true);assert.equal(agreementUser.agreement_version_accepted,1);
+await sendAs(456,'/accept');assert.equal(agreementUser.agreement_version_accepted,1);assert.match(messages.at(-1).text,/Updated terms/);
+await sendAs(456,'agreement:2',true);assert.equal(agreementUser.agreement_version_accepted,2);
+assert.ok(agreementCalls.some(x=>x.url.endsWith('/unpinChatMessage')&&x.body.message_id===777&&x.body.chat_id===456));
+assert.ok(!agreementCalls.some(x=>x.url.endsWith('/unpinAllChatMessages')));
+console.log('Versioned agreement review, stale acceptance rejection and scoped notice unpin passed');

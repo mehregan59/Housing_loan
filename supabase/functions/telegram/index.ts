@@ -106,7 +106,7 @@ export function settingsSummary(u:any):string {
   const s=u.settings;
   if (s.language==='fa') {
     const option=(key:string,unit:string)=>s[key]==null?'بدون محدودیت':unit==='EUR'?money(s[key]):s[key]+unit;
-    return `🏠 تنظیمات جستجوی ملک
+    return (s._guide_version===1?'':'📌 راهنما تکمیل نشده است — /guide\n\n')+`🏠 تنظیمات جستجوی ملک
 📍 ${s.location}، آلمان · شعاع ${s.radius_km} کیلومتر
 شهرهای ترجیحی: ${(s.areas||[]).join(', ')||'بدون ترجیح اضافی'}
 💶 حداکثر قیمت خرید: ${money(s.max_price_eur)}
@@ -131,7 +131,7 @@ export function settingsSummary(u:any):string {
   }
   const optional=(key:string,unit:string)=>s[key]==null?'No filter set':unit==='EUR'?money(s[key]):s[key]+unit;
   const exclusions=(s.exclude||[]).map((x:string)=>x==='Erbpacht'?'Leasehold':x==='Zwangsversteigerung'?'Foreclosure auctions':x).join(', ')||'None';
-  return `🏠 Your property search
+  return (s._guide_version===1?'':'📌 Setup guide not completed — open /guide\n\n')+`🏠 Your property search
 📍 ${s.location}, Germany · within ${s.radius_km} km
 Preferred towns: ${(s.areas||[]).join(', ')||'No additional preference'}
 💶 Maximum purchase price: ${money(s.max_price_eur)}
@@ -251,8 +251,18 @@ async function tg(method: string, body: unknown) {
   const r = await fetch('https://api.telegram.org/bot'+env('TELEGRAM_BOT_TOKEN')+'/'+method, {
     method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:AbortSignal.timeout(10000)
   });
-  if (!r.ok || !(await r.json()).ok) throw new Error('Telegram operation failed');
+  const data=await r.json();
+  if (!r.ok || !data.ok) throw new Error('Telegram operation failed');
+  return data.result;
 }
+async function clearNoticePins(id:number,kind:string,version:number) {
+  const rows=await db('GET',`bot_notices?user_id=eq.${id}&kind=eq.${kind}&version=lte.${version}&acknowledged_at=is.null`);
+  for(const row of rows) {
+    if(row.message_id) await tg('unpinChatMessage',{chat_id:id,message_id:row.message_id});
+    await db('PATCH',`bot_notices?user_id=eq.${id}&kind=eq.${kind}&version=eq.${row.version}`,{pinned:false,acknowledged_at:new Date().toISOString()});
+  }
+}
+
 async function reply(id: number, text: string, keyboard?: unknown, entities?: any[]) {
   let first = true;let offset=0;
   while (text.length) {
@@ -495,6 +505,15 @@ Deno.serve(async req => {
     const cmd = rawcmd.split('@')[0].toLowerCase();
     const rest = parts.join(' ');
     const services={inline_keyboard:[[button('🏦 Property investment','service:investment')],[button('🏠 Rental apartment','service:rental')]]};
+    if(action.startsWith('agreement:')) {
+      const version=Number(action.slice(10));
+      if(!Number.isSafeInteger(version)||version!==Number(billingControl?.agreement_version||1)||!billingControl?.agreement_text) {
+        await reply(id,'This agreement button is out of date. Send /start to review the current notice.');return new Response('ok');
+      }
+      await db('PATCH','bot_users?user_id=eq.'+id,{accepted_at:new Date().toISOString(),agreement_version_accepted:version});
+      if(billingControl?.notices_enabled) { try { await clearNoticePins(id,'agreement',version); } catch { /* Worker retries removal. */ } }
+      await reply(id,'✅ Agreement version '+version+' accepted.',services);return new Response('ok');
+    }
     if(cmd==='/service'||action.startsWith('service:')) {
       if(!user.accepted_at) { await reply(id,NOTICE,{inline_keyboard:[[button('I understand — continue','accept')]]});return new Response('ok'); }
       if(action.startsWith('service:')) {
@@ -625,6 +644,7 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
       if(action==='guide:complete' && seen>=6) {
         await clearEdit();
         await db('PATCH','bot_users?user_id=eq.'+id,{settings:{...user.settings,_guide_version:1}});
+        if(billingControl?.notices_enabled) { try { await clearNoticePins(id,'guide',1); } catch { /* Worker retries removal. */ } }
         await reply(id,user.settings.language==='fa'?'✅ راهنما تکمیل شد. تنظیمات را بررسی کنید؛ برای شروع تحلیل /run را بفرستید.':user.settings.language==='de'?'✅ Anleitung abgeschlossen. Einstellungen prüfen; /run startet eine Analyse.':'✅ Guide completed. Review your settings; send /run when ready to start an analysis.',buttons);
         return new Response('ok');
       }
@@ -746,9 +766,13 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
     // /run uses an atomic unique request key in SQL. Other commands are idempotent,
     // except /support which gets a dedicated unique update record.
     if (cmd==='/start' || cmd==='/disclaimer') {
-      await reply(id,NOTICE,{inline_keyboard:[[{text:'I understand — continue',callback_data:'accept'}]]});
+      const updated=Boolean(billingControl?.agreement_text);
+      await reply(id,updated?billingControl.agreement_text:NOTICE,{inline_keyboard:[[{text:'I understand and accept — continue',callback_data:updated?'agreement:'+billingControl.agreement_version:'accept'}]]});
     } else if (cmd==='/accept') {
-      await db('PATCH','bot_users?user_id=eq.'+id,{accepted_at:new Date().toISOString()});
+      if(billingControl?.agreement_text&&Number(billingControl.agreement_version)>1) {
+        await reply(id,billingControl.agreement_text,{inline_keyboard:[[button('I have read and accept','agreement:'+billingControl.agreement_version)]]});return new Response('ok');
+      }
+      await db('PATCH','bot_users?user_id=eq.'+id,{accepted_at:new Date().toISOString(),...(billingControl?.agreement_version?{agreement_version_accepted:billingControl.agreement_version}:{})});
       await reply(id,'Which service would you like?',services);
     } else if (cmd==='/help') {
       await reply(id,(user.settings.language==='fa'?HELP_FA:HELP).replace(user.payments_active?'Free: 1 report/week. Paid: up to 7. Scheduled reports count too. Reset Monday 00:00 Europe/Berlin. Manual membership during pilot.':'__unused__',user.payments_active?'Paid reports are purchased individually; the 30-day pass covers weekly deliveries.':'')+(user.payments_active?'\n\n'+PAYMENT_GUIDE:'')+'\n\n'+(user.settings.language==='fa'?CALCULATIONS_FA:user.settings.language==='de'?CALCULATIONS_DE:CALCULATIONS_EN),buttons);
