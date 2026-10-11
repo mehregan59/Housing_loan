@@ -15,7 +15,7 @@ def split_report(report):
         urls=re.findall(r'https?://\S+',lines[-1])
         if not urls: return {'header':report,'cards':[],'notes':''}
         brief=[lines[0]]
-        for prefix in ('📍','🏷','🧾','📐','💵','🏦','💳','📈'):
+        for prefix in ('📍','🏷','🧾','📐','🚪','🛋','💵','🏦','💳','📈'):
             brief.extend(line for line in lines if line.startswith(prefix))
         cards.append({'detail':block,'brief':'\n'.join(brief),'url':urls[-1]})
     return {'header':report[:headings[0].start()].strip(),'cards':cards,'notes':report[notes_start:].strip()}

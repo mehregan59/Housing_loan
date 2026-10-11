@@ -165,3 +165,21 @@ class Tests(unittest.TestCase):
         api.assert_not_called()
 
 if __name__=='__main__': unittest.main()
+
+class ProgressTests(unittest.TestCase):
+    def test_success_restores_run_and_failure_refunds_without_retry(self):
+        db=Mock();job={'user_id':123,'settings':{'language':'en'},'progress_message_id':777}
+        agent.finish_progress(db,job,'job','complete',True)
+        self.assertEqual(db.edit_progress.call_args.args[1],777)
+        self.assertEqual(db.edit_progress.call_args.args[3]['inline_keyboard'][0][0]['callback_data'],'run')
+        self.assertIn('delivered',db.telegram.call_args.args[1])
+        agent.finish_progress(db,job,'job','failed',False)
+        self.assertIn('no report charge',db.telegram.call_args.args[1])
+        agent.finish_progress(db,job,'job','uncertain',False)
+        self.assertNotIn('run',str(db.telegram.call_args.args[2]))
+        db.rpc.assert_not_called()
+
+    def test_deleted_progress_does_not_block_ready_notification(self):
+        db=Mock();db.edit_progress.side_effect=RuntimeError('deleted')
+        agent.finish_progress(db,{'user_id':123,'progress_message_id':7},'job','complete',True)
+        db.telegram.assert_called_once()

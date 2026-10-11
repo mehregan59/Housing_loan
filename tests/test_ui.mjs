@@ -50,8 +50,11 @@ globalThis.fetch=async(url,options={})=>{
 async function send(text,callback=false){
   const message={chat:{id:123,type:'private'},from:{id:123},text};
   const payload=callback?{callback_query:{id:'cb',from:{id:123},message,data:text}}:{message};
+  const requestFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>url.includes('bot_jobs?')&&url.includes('status=in.(queued,running)')?Response.json(globalThis.testActiveJob?[globalThis.testActiveJob]:[]):requestFetch(url,options);
   const response=await handler(new Request('https://webhook.test',{method:'POST',
     headers:{'X-Telegram-Bot-Api-Secret-Token':'test-secret'},body:JSON.stringify(payload)}));
+  globalThis.fetch=requestFetch;
   assert.equal(response.status,200);
 }
 await send('/settings');
@@ -123,7 +126,10 @@ globalThis.fetch=async(address,options={})=>{
 async function sendAs(id,text,callback=false){
   const message={chat:{id,type:'private'},from:{id,first_name:'Test applicant'},text};
   const payload=callback?{callback_query:{id:'access-cb',from:message.from,message,data:text}}:{message};
+  const requestFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>url.includes('bot_jobs?')&&url.includes('status=in.(queued,running)')?Response.json(globalThis.testActiveJob?[globalThis.testActiveJob]:[]):requestFetch(url,options);
   const response=await handler(new Request('https://webhook.test',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':'test-secret'},body:JSON.stringify(payload)}));
+  globalThis.fetch=requestFetch;
   assert.equal(response.status,200);
 }
 await sendAs(456,'/start');
@@ -344,7 +350,10 @@ globalThis.fetch=async(url,options={})=>{
   throw new Error('Unexpected payment endpoint');
 };
 async function paymentUpdate(payload) {
+  const requestFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>url.includes('bot_jobs?')&&url.includes('status=in.(queued,running)')?Response.json(globalThis.testActiveJob?[globalThis.testActiveJob]:[]):requestFetch(url,options);
   const response=await handler(new Request('https://webhook.test',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':'test-secret'},body:JSON.stringify(payload)}));
+  globalThis.fetch=requestFetch;
   assert.equal(response.status,200);
 }
 const payload='housing:00000000-0000-4000-8000-000000000001';
@@ -384,6 +393,9 @@ await sendAs(123,'rentedit:max_cold_rent_eur',true);await sendAs(123,'800');asse
 await sendAs(123,'/set max_charges_eur 200');assert.match(messages.at(-1).text,/Maximum Nebenkosten: €200/);
 await sendAs(123,'/set max_rent_eur none');assert.equal(renter.rental_settings.max_rent_eur,null);assert.match(messages.at(-1).text,/Maximum Warmmiete: No limit/);
 await sendAs(123,'/location Berlin');assert.match(messages.at(-1).text,/Berlin, Germany/);assert.match(messages.at(-1).text,/Maximum cold rent: €800/);
+await sendAs(123,'/set min_rooms 2.5');assert.equal(renter.rental_settings.min_rooms,2.5);
+await sendAs(123,'/set max_rooms 4');assert.equal(renter.rental_settings.max_rooms,4);
+await sendAs(123,'rentfurnish:partial',true);assert.equal(renter.rental_settings.furnishing,'partial');assert.match(messages.at(-1).text,/Partly furnished/);
 await sendAs(123,'rentlang:de',true);assert.equal(renter.rental_settings.language,'de');assert.match(messages.at(-1).text,/Ihre Mietsuche/);assert.match(messages.at(-1).text,/Maximale Kaltmiete/);assert.ok(messages.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='🔎 Mietsuche starten'));
 await sendAs(123,'/help');assert.match(messages.at(-1).text,/Grenzen werden separat geprüft/);
 await sendAs(123,'/set language en');assert.equal(renter.rental_settings.language,'en');assert.match(messages.at(-1).text,/Your rental settings/);assert.ok(messages.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.text==='🔎 Run rental search'));
@@ -426,3 +438,10 @@ await sendAs(456,'/help');assert.match(messages.at(-1).text,/Wohnungs- und Kredi
 await sendAs(456,'/settings');assert.match(messages.at(-1).text,/Ihre Immobiliensuche/);assert.ok(messages.at(-1).reply_markup.inline_keyboard.flat().some(b=>b.callback_data==='edit:language'));
 await sendAs(456,'/set language en');assert.equal(loanUser.settings.language,'en');
 console.log('German investment settings/help and language editing under pilot lock passed');
+
+globalThis.testActiveJob={id:'00000000-0000-0000-0000-000000000001',status:'running'};
+const beforeRun=messages.length;
+await sendAs(456,'/run');assert.match(messages.at(-1).text,/queued or running/);assert.equal(messages.at(-1).reply_markup.inline_keyboard[0][0].callback_data,'jobstatus');
+await sendAs(456,'jobstatus',true);assert.match(messages.at(-1).text,/Repeated taps/);
+delete globalThis.testActiveJob;
+console.log('Active jobs block new runs and show a status button without paid endpoints');

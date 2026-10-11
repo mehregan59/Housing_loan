@@ -153,6 +153,13 @@ class Backend:
                 raise RuntimeError('Telegram delivery failed')
             offset+=units
 
+    def edit_progress(self,user,message_id,text,keyboard):
+        r=self.http.post('https://api.telegram.org/bot'+os.environ['TELEGRAM_BOT_TOKEN']+'/editMessageText',
+            json={'chat_id':user,'message_id':message_id,'text':text,'reply_markup':keyboard})
+        data=r.json()
+        if not r.is_success or not data.get('ok'):
+            if 'message is not modified' not in data.get('description',''): raise RuntimeError('Progress update failed')
+
     def report(self, user, text, job_id, language='en'):
         from report_pages import split_report,page,PAGE_SIZE
         view=split_report(text)
@@ -250,6 +257,27 @@ class ResearchUpgradeInactive(Exception):
     """Never silently fall back to the expensive legacy research path."""
 
 
+def finish_progress(db,job,job_id,status,delivered):
+    if 'progress_message_id' not in job: return
+    de=job.get('settings',{}).get('language')=='de'
+    if status=='uncertain':
+        text='⚠️ Suche gestoppt; Administratorprüfung erforderlich. Kein automatischer Neustart. Zahlungen für fehlgeschlagene Einzelberichte werden erstattet.' if de else '⚠️ Search stopped; administrator review is required. No automatic retry. Failed single-report payments are refunded.'
+        keys={'inline_keyboard':[[{'text':'Support','callback_data':'help'}]]}
+    else:
+        text=('✅ Ihr Bericht wurde zugestellt. Mit /last kostenlos erneut öffnen.' if de else '✅ Your report was delivered. Use /last to reopen it for free.') if delivered else ('⚠️ Bericht konnte nicht zugestellt werden. Kein Entgelt für einen fehlgeschlagenen Einzelbericht; eine erfolgte Zahlung wird erstattet. API-Kosten des Administrators können entstehen. Kein automatischer Neustart.' if de else '⚠️ Report could not be delivered. Failed single reports have no report charge; any report payment will be refunded. Administrator API costs may still apply. No automatic retry.')
+        keys={'inline_keyboard':[[{'text':'🔎 Starten' if de else '🔎 Run again','callback_data':'run'},{'text':'📂 Letzter Bericht' if de else '📂 Last report','callback_data':'last'}]]}
+    try:
+        message_id=job.get('progress_message_id')
+        if message_id is None:
+            rows=db.request('GET','bot_jobs?id=eq.'+job_id+'&select=progress_message_id')
+            message_id=rows[0].get('progress_message_id') if rows else None
+        if message_id: db.edit_progress(job['user_id'],message_id,text,keys)
+    except Exception:
+        pass  # A missing/deleted progress message must not break delivery or refunds.
+    try: db.telegram(job['user_id'],text,keys)
+    except Exception: pass
+
+
 def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
     db.rpc('bot_finish', {'p_id': job_id, 'p_status':status, 'p_cost':cost,
         'p_report':report if status=='complete' else None, 'p_usage':usage,
@@ -278,6 +306,7 @@ def finish_job(db,job,job_id,status,cost,usage,report,urls,error):
     if job.get('billing_kind')=='report':
         from payments import settle_report
         settle_report(db,job_id,delivered)
+    finish_progress(db,job,job_id,status,delivered)
     ledger = db.request('GET', 'bot_jobs?created_at=gte.'+datetime.now(timezone.utc).strftime('%Y-%m-01T00:00:00Z')+'&select=charged_usd,reserved_usd')
     total = sum(float(x['charged_usd'] if x['charged_usd'] is not None else x['reserved_usd']) for x in ledger)
     try:

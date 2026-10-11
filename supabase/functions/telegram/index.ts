@@ -329,7 +329,7 @@ export function splitReport(report:string) {
     const lines=detail.split('\n');
     const urls=lines.at(-1)!.match(/https?:\/\/\S+/g);
     if(!urls) return {header:report,cards:[],notes:''};
-    const brief=[lines[0],...['📍','🏷','🧾','📐','💵','🏦','💳','📈'].flatMap(p=>lines.filter(l=>l.startsWith(p)))].join('\n');
+    const brief=[lines[0],...['📍','🏷','🧾','📐','🚪','🛋','💵','🏦','💳','📈'].flatMap(p=>lines.filter(l=>l.startsWith(p)))].join('\n');
     cards.push({detail,brief,url:urls.at(-1)!});
   }
   return {header:report.slice(0,headings[0].index).trim(),cards,notes:report.slice(notesStart).trim()};
@@ -373,9 +373,11 @@ async function reportHash(report:string) {
 export function rentalReportLanguage(text:string,language:string) {
   if(!/🏠 (Rental apartments|Mietwohnungen) —/.test(text)) return text;
   const pairs:[string,string][]=[["🏠 Rental apartments —", "🏠 Mietwohnungen —"], ["Germany · within", "Deutschland · im Umkreis von"], ["maximum Warmmiete", "maximale Warmmiete"], ["/month", "/Monat"], ["No limit", "Keine Grenze"], ["Checked:", "Geprüft:"], ["within verified limits;", "innerhalb bestätigter Grenzen;"], ["provisional (rent or distance unverified).", "vorläufig (Miete oder Entfernung nicht bestätigt)."], ["Search coverage is limited; this is not an exhaustive market search.", "Die Suche deckt nur einen Teil des Marktes ab; sie ist nicht vollständig."], ["New verified listings:", "Neue bestätigte Anzeigen:"], ["retained total:", "insgesamt gespeichert:"], ["⚠️ Partial rental research:", "⚠️ Unvollständige Mietrecherche:"], ["Collection stages:", "Suchschritte:"], ["Total monthly rent:", "Warmmiete:"], ["Cold rent:", "Kaltmiete:"], ["Size:", "Wohnfläche:"], ["Available:", "Verfügbar ab:"], ["Deposit:", "Kaution:"], ["Listing:", "Anzeige:"], ["Missing data", "Fehlende Angabe"], ["Missing total rent", "Warmmiete fehlt"], ["advertised Warmmiete", "angegebene Warmmiete"], ["calculated from advertised cold rent + complete charges", "aus angegebener Kaltmiete + vollständigen Nebenkosten berechnet"], ["total monthly rent missing — budget compliance unverified", "Warmmiete fehlt — Budgeteinhaltung nicht bestätigt"], ["distance unverified — radius compliance unverified", "Entfernung nicht bestätigt — Umkreis nicht bestätigt"], ["total missing — selected limit unverified", "Warmmiete fehlt — ausgewählte Grenze nicht bestätigt"], ["cold rent missing — selected limit unverified", "Kaltmiete fehlt — ausgewählte Grenze nicht bestätigt"], ["Nebenkosten missing — selected limit unverified", "Nebenkosten fehlen — ausgewählte Grenze nicht bestätigt"], ["Confirm availability, lease and all charges with the landlord.", "Verfügbarkeit, Mietvertrag und alle Kosten beim Vermieter bestätigen lassen."], ["💶 RENT & SEARCH NOTES", "💶 MIETE & SUCHHINWEISE"], ["Warmmiete is the advertised total housing rent. Electricity, internet or other separately paid charges may be extra. Missing charges are never treated as zero. Provisional listings may exceed your budget or radius. Availability is not guaranteed; contact the landlord.", "Warmmiete ist die angegebene Gesamtmiete. Separat gezahlter Strom, Internet oder andere Kosten können hinzukommen. Fehlende Kosten gelten niemals als null. Vorläufige Anzeigen können Budget oder Umkreis überschreiten. Verfügbarkeit ist nicht garantiert; kontaktieren Sie den Vermieter."], ["Public listing data is removed after seven days.", "Öffentliche Anzeigendaten werden nach sieben Tagen gelöscht."], ["Information only; verify the listing and lease independently.", "Nur zur Information; Anzeige und Mietvertrag selbstständig prüfen."]];
+  pairs.push(['nearby alternatives — outside your original preferences.','ähnliche Alternativen — außerhalb Ihrer ursprünglichen Wünsche.'],['You may also like — ','Vielleicht interessant — '],[' vs your ',' gegenüber Ihrer Grenze '],[' maximum',' maximal'],['distance:','Entfernung:'],[' km radius',' km Umkreis'],['rooms:','Zimmer:'],[' outside your selected range',' außerhalb Ihrer gewählten Spanne'],['cold rent alone exceeds your Warmmiete limit','Kaltmiete allein überschreitet Ihre Warmmietgrenze'],['partly furnished instead of your furnishing preference','teilmöbliert statt Ihrer Möblierungspräferenz'],['cold rent:','Kaltmiete:'],['Listing checked:','Anzeige geprüft:'],['Rooms:','Zimmer:'],['Furnishing:','Möblierung:'],['Partly furnished','Teilmöbliert'],['Unfurnished','Unmöbliert'],['Furnished','Möbliert'],['room count missing — selected limit unverified','Zimmerzahl fehlt — ausgewählte Grenze nicht bestätigt'],['furnishing missing — selected limit unverified','Möblierung fehlt — ausgewählte Grenze nicht bestätigt'],['Links discovered:','Gefundene Links:'],['individually checked:','einzeln geprüft:'],['records rejected:','Datensätze abgelehnt:'],['awaiting verification:','warten auf Prüfung:']);
   const german=language==='de';
   pairs.sort((a,b)=>(german?b[0].length:b[1].length)-(german?a[0].length:a[1].length));
   return text.split('\n').map(line=>{
+    if(line.startsWith('🔄 You may also like — ')||line.startsWith('🔄 Vielleicht interessant — ')) return line.replace(german?'🔄 You may also like — ':'🔄 Vielleicht interessant — ',german?'🔄 Vielleicht interessant — ':'🔄 You may also like — ');
     if(line.startsWith('🏠 — ')||(line.startsWith('📍 ')&&!/Germany · within|Deutschland · im Umkreis von/.test(line))) return line;
     for(const [en,de] of pairs) line=line.split(german?en:de).join(german?de:en);
     return line;
@@ -394,6 +396,24 @@ async function sendReport(id:number,report:string,source:string,language:string)
 }
 
 const buttons = {inline_keyboard:[[{text:'⚙️ My settings',callback_data:'settings'},{text:'🔎 Run analysis',callback_data:'run'}],[{text:'📂 Saved report (free)',callback_data:'saved'},{text:'Help',callback_data:'help'}],[{text:'📖 Setup guide',callback_data:'guide:resume'}]]};
+async function showRunning(id:number,job:any,language:string,message?:any) {
+  const de=language==='de';
+  const keyboard={inline_keyboard:[[button(de?'⏳ Suche läuft — Status':'⏳ Search in progress — status','jobstatus')]]};
+  // Replace Run on the clicked menu; Telegram has no native disabled button.
+  if(message?.message_id&&message.reply_markup?.inline_keyboard) {
+    const changed={inline_keyboard:message.reply_markup.inline_keyboard.map((row:any[])=>row.map(b=>['run','refresh'].includes(b.callback_data)?keyboard.inline_keyboard[0][0]:b))};
+    try { await tg('editMessageReplyMarkup',{chat_id:id,message_id:message.message_id,reply_markup:changed}); } catch { /* Atomic enqueue remains the authority. */ }
+  }
+  const body=de?'⏳ Ihre Suche ist eingereiht oder läuft. Die Ergebnisse kommen hier an. Mehrfaches Antippen startet keine weitere Analyse. Fehlgeschlagene Einzelberichte werden nicht berechnet; eine erfolgte Zahlung wird erstattet. API-Kosten des Administrators können trotzdem entstehen.':'⏳ Your search is queued or running. Results will arrive here. Repeated taps do not start another analysis. Failed single reports have no report charge; any report payment will be refunded. Administrator API costs may still apply.';
+  const sent=await tg('sendMessage',{chat_id:id,text:body,reply_markup:keyboard});
+  if(job?.id&&sent?.message_id&&!job.progress_message_id) {
+    try { await db('PATCH','bot_jobs?id=eq.'+job.id+'&user_id=eq.'+id,{progress_message_id:sent.message_id}); } catch { /* Status button still works if progress tracking fails. */ }
+  }
+}
+async function activeJob(id:number) {
+  const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&status=in.(queued,running)&order=created_at.desc&limit=1&select=id,status,progress_message_id');
+  return jobs.find((j:any)=>j.id&&['queued','running'].includes(j.status));
+}
 async function dispatch(job: string) {
   const repo = env('GITHUB_REPOSITORY');
   if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error('Invalid repository');
@@ -468,6 +488,7 @@ Deno.serve(async req => {
         else if(result.product==='weekly30') await reply(id,'✅ Weekly pass purchased. Active from '+result.starts_at+' until '+result.ends_at+'. All weekly delivery dates in that interval are included. No automatic renewal; extra manual reports are separate.');
         else await reply(id,'✅ Payment received. Your report is queued and will arrive here. Failed analysis or delivery is refunded in Stars.');
       }
+      if(result.job_id&&!result.duplicate) { try { const owners=await db('GET','bot_users?user_id=eq.'+id);await showRunning(id,{id:result.job_id},owners[0]?.settings?.language||'en'); } catch { /* Keep durable payment fulfillment. */ } }
       if(result.job_id||result.state==='refund_pending') { try { await dispatch(result.job_id||''); } catch { /* Hourly worker recovers the durable order/job/refund. */ } }
       return new Response('ok');
     }
@@ -559,10 +580,27 @@ Deno.serve(async req => {
     const localizedReply=async(chat:number,body:string,keyboard?:any,entities?:any[])=>{
       const german=uiLanguage==='de'&&user.service!=='rental';
       const translateBody=german&&!entities?.length&&!/🏠 (Apartment screening|Wohnungssuche|Rental apartments|Mietwohnungen) —/.test(body);
-      const keys=german&&keyboard?.inline_keyboard?{...keyboard,inline_keyboard:keyboard.inline_keyboard.map((row:any[])=>row.map(b=>({...b,text:investmentGerman(b.text)})))}:keyboard;
+      let keys=german&&keyboard?.inline_keyboard?{...keyboard,inline_keyboard:keyboard.inline_keyboard.map((row:any[])=>row.map(b=>({...b,text:investmentGerman(b.text)})))}:keyboard;
+      if(keys?.inline_keyboard?.flat().some((b:any)=>b.callback_data==='run')) {
+        try { const running=await activeJob(chat);if(running) keys={...keys,inline_keyboard:keys.inline_keyboard.map((row:any[])=>row.map(b=>b.callback_data==='run'?button(ui('⏳ Search in progress — status','⏳ Suche läuft — Status'),'jobstatus'):b))}; } catch { /* SQL still prevents a duplicate run. */ }
+      }
       return reply(chat,translateBody?investmentGerman(body):body,keys,entities);
     };
     const services={inline_keyboard:[[button(ui('🏦 Property investment','🏦 Immobilieninvestition'),'service:investment')],...(adminUnlimited?[[button(ui('🏠 Rental apartment','🏠 Mietwohnung'),'service:rental')]]:[])]};
+    if(action==='jobstatus'||cmd==='/status') {
+      const current=await activeJob(id);
+      if(current) await showRunning(id,current,uiLanguage,cb?message:undefined);
+      else {
+        const jobs=await db('GET','bot_jobs?user_id=eq.'+id+'&order=created_at.desc&limit=1&select=status,delivered');
+        const latest=jobs[0];
+        const blocked=latest?.status==='uncertain';
+        const body=blocked?ui('⚠️ Search stopped and needs administrator review. No automatic paid retry. Any failed single-report payment will be refunded.','⚠️ Suche gestoppt; Administratorprüfung erforderlich. Kein automatischer kostenpflichtiger Neustart. Zahlungen für fehlgeschlagene Einzelberichte werden erstattet.'):latest?.status==='complete'?ui('✅ Search finished. Use /last to open your report for free.','✅ Suche abgeschlossen. Mit /last den Bericht kostenlos öffnen.'):ui('The search is no longer running. Failed single reports are not charged; any payment is refunded. You can request another report within your allowance.','Die Suche läuft nicht mehr. Fehlgeschlagene Einzelberichte werden nicht berechnet; Zahlungen werden erstattet. Sie können innerhalb Ihres Berichtslimits erneut starten.');
+        const keys={inline_keyboard:[blocked?[button(ui('❓ Support','❓ Support'),'help')]:[button(ui('🔎 Run','🔎 Starten'),'run'),button(ui('📂 Last report','📂 Letzter Bericht'),'last')]]};
+        if(cb&&message.message_id) { try { await tg('editMessageText',{chat_id:id,message_id:message.message_id,text:body,reply_markup:keys}); } catch { await reply(id,body,keys); } }
+        else await reply(id,body,keys);
+      }
+      return new Response('ok');
+    }
     if(action.startsWith('agreement:')) {
       const version=Number(action.slice(10));
       if(!Number.isSafeInteger(version)||version!==Number(billingControl?.agreement_version||1)||!billingControl?.agreement_text) {
@@ -571,6 +609,10 @@ Deno.serve(async req => {
       await db('PATCH','bot_users?user_id=eq.'+id,{accepted_at:new Date().toISOString(),agreement_version_accepted:version});
       if(billingControl?.notices_enabled) { try { await clearNoticePins(id,'agreement',version); } catch { /* Worker retries removal. */ } }
       await localizedReply(id,'✅ Agreement version '+version+' accepted.',services);return new Response('ok');
+    }
+    if(user.accepted_at&&(cmd==='/run'||cmd==='/refresh')) {
+      const current=await activeJob(id);
+      if(current) { await showRunning(id,current,uiLanguage,cb?message:undefined);return new Response('ok'); }
     }
     if(cmd==='/service'||action.startsWith('service:')) {
       if(!user.accepted_at) { await localizedReply(id,NOTICE,{inline_keyboard:[[button('I understand — continue','accept')]]});return new Response('ok'); }
@@ -597,7 +639,7 @@ Deno.serve(async req => {
       const r=user.rental_settings||{location:'Freiburg',radius_km:25,max_rent_eur:1000};
       let lang=r.language||user.settings.language||'en';
       const tr=(en:string,de:string)=>lang==='de'?de:en;
-      const makeRentalButtons=()=>({inline_keyboard:[[button(tr('📍 Area','📍 Ort'),'rentedit:location'),button(tr('📏 Radius','📏 Umkreis'),'rentedit:radius_km')],[button(tr('💵 Max Warmmiete','💵 Max. Warmmiete'),'rentedit:max_rent_eur')],[button(tr('🏷 Max cold rent','🏷 Max. Kaltmiete'),'rentedit:max_cold_rent_eur'),button(tr('🧾 Max Nebenkosten','🧾 Max. Nebenkosten'),'rentedit:max_charges_eur')],[button(tr('🔎 Run rental search','🔎 Mietsuche starten'),'run'),button(tr('📂 Last report','📂 Letzter Bericht'),'last')],[button(tr('📅 Daily on','📅 Täglich an'),'rentdaily:on'),button(tr('Daily off','Täglich aus'),'rentdaily:off')],[button('🇬🇧 English','rentlang:en'),button('🇩🇪 Deutsch','rentlang:de')],[button(tr('🔀 Change service','🔀 Dienst wechseln'),'service')]]} );
+      const makeRentalButtons=()=>({inline_keyboard:[[button(tr('📍 Area','📍 Ort'),'rentedit:location'),button(tr('📏 Radius','📏 Umkreis'),'rentedit:radius_km')],[button(tr('💵 Max Warmmiete','💵 Max. Warmmiete'),'rentedit:max_rent_eur')],[button(tr('🏷 Max cold rent','🏷 Max. Kaltmiete'),'rentedit:max_cold_rent_eur'),button(tr('🧾 Max Nebenkosten','🧾 Max. Nebenkosten'),'rentedit:max_charges_eur')],[button(tr('🔎 Run rental search','🔎 Mietsuche starten'),'run'),button(tr('📂 Last report','📂 Letzter Bericht'),'last')],[button(tr('📅 Daily on','📅 Täglich an'),'rentdaily:on'),button(tr('Daily off','Täglich aus'),'rentdaily:off')],[button(tr('🚪 Minimum rooms','🚪 Mindestzimmer'),'rentedit:min_rooms'),button(tr('🚪 Maximum rooms','🚪 Höchstzimmer'),'rentedit:max_rooms')],[button(tr('🛋 Furnishing','🛋 Möblierung'),'rentfurnish:menu')],[button('🇬🇧 English','rentlang:en'),button('🇩🇪 Deutsch','rentlang:de')],[button(tr('🔀 Change service','🔀 Dienst wechseln'),'service')]]} );
       const rentalButtons=makeRentalButtons();
       const rentalSummary=(v:any)=>{
         const limit=(k:string)=>v[k]==null?tr('No limit','Keine Grenze'):'€'+v[k]+tr('/month','/Monat');
@@ -607,11 +649,20 @@ Deno.serve(async req => {
 💵 `+tr('Maximum Warmmiete','Maximale Warmmiete')+`: ${limit('max_rent_eur')}
 🏷 `+tr('Maximum cold rent','Maximale Kaltmiete')+`: ${limit('max_cold_rent_eur')}
 🧾 `+tr('Maximum Nebenkosten','Maximale Nebenkosten')+`: ${limit('max_charges_eur')}
+🚪 `+tr('Rooms','Zimmer')+`: ${v.min_rooms??tr('No minimum','Kein Minimum')} – ${v.max_rooms??tr('No maximum','Kein Maximum')}
+🛋 `+tr('Furnishing','Möblierung')+`: ${{any:tr('Any','Egal'),furnished:tr('Furnished','Möbliert'),partial:tr('Partly furnished','Teilmöbliert'),unfurnished:tr('Unfurnished','Unmöbliert')}[v.furnishing as string]||tr('Any','Egal')}
 🌐 `+tr('Language','Sprache')+`: ${lang==='de'?'Deutsch':'English'}
 📅 `+tr('Daily','Täglich')+`: ${user.rental_daily?tr('On','An'):tr('Off','Aus')} · 09:00 Europe/Berlin
 
 `+tr('Warmmiete includes cold rent and advertised complete charges. These limits are checked separately; they are not added together. Missing components are flagged for verification. Use none to clear a rent limit; keep at least one rent limit. Separate electricity/internet may be extra. Tap a setting to edit it, then Run. First report and pilot access are free; later packages are not available yet. Reports reopen free for seven days. /daily on or off controls daily delivery. /service changes service; /support contacts support.','Warmmiete umfasst Kaltmiete und die angegebenen vollständigen Nebenkosten. Die Grenzen werden separat geprüft und nicht addiert. Fehlende Angaben werden zur Prüfung markiert. Mit none eine Mietgrenze entfernen; mindestens eine Mietgrenze behalten. Strom/Internet können extra kosten. Eine Einstellung antippen, ändern und dann die Suche starten. Erster Bericht und Pilotzugang sind kostenlos; spätere Pakete sind noch nicht verfügbar. Berichte lassen sich sieben Tage kostenlos öffnen. /daily on oder off steuert die tägliche Zustellung. /service wechselt den Dienst; /support kontaktiert den Support.');
       };
+      if(action.startsWith('rentfurnish:')||(cmd==='/set'&&parts[0]==='furnishing')) {
+        const value=action.startsWith('rentfurnish:')?action.slice(12):parts[1];
+        if(value==='menu') { await localizedReply(id,tr('Choose furnishing:','Möblierung auswählen:'),{inline_keyboard:[[button(tr('Any','Egal'),'rentfurnish:any')],[button(tr('Furnished','Möbliert'),'rentfurnish:furnished')],[button(tr('Partly furnished','Teilmöbliert'),'rentfurnish:partial')],[button(tr('Unfurnished','Unmöbliert'),'rentfurnish:unfurnished')]]});return new Response('ok'); }
+        if(!['any','furnished','partial','unfurnished'].includes(value)) throw new Error('Invalid furnishing');
+        const changed={...r,furnishing:value};delete changed._edit;
+        await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:changed});await localizedReply(id,rentalSummary(changed),rentalButtons);return new Response('ok');
+      }
       if(action.startsWith('rentlang:')||(cmd==='/set'&&parts[0]==='language')) {
         const choice=action.startsWith('rentlang:')?action.slice(9):parts[1]?.toLowerCase();
         if(!['en','de'].includes(choice)) { await localizedReply(id,tr('Choose en or de.','Bitte en oder de auswählen.'),rentalButtons);return new Response('ok'); }
@@ -623,9 +674,9 @@ Deno.serve(async req => {
       }
       if(action.startsWith('rentedit:')) {
         const field=action.slice(9);
-        if(!['location','radius_km','max_rent_eur','max_cold_rent_eur','max_charges_eur'].includes(field)) throw new Error('Invalid rental setting');
+        if(!['location','radius_km','max_rent_eur','max_cold_rent_eur','max_charges_eur','min_rooms','max_rooms'].includes(field)) throw new Error('Invalid rental setting');
         await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:{...r,_edit:field}});
-        await localizedReply(id,field==='location'?tr('Send a town or district in Germany.','Senden Sie einen Ort oder Stadtteil in Deutschland.'):field==='radius_km'?tr('Send radius in km (0–300).','Senden Sie den Umkreis in km (0–300).'):tr('Send your maximum ','Senden Sie Ihre maximale ')+(field==='max_rent_eur'?'Warmmiete':field==='max_cold_rent_eur'?tr('cold rent','Kaltmiete'):'Nebenkosten')+tr(' in euros/month. Send none to clear this limit. Use /cancel to exit.',' in Euro/Monat. Mit none entfernen, mit /cancel abbrechen.'));return new Response('ok');
+        await localizedReply(id,['min_rooms','max_rooms'].includes(field)?tr('Send a room count, e.g. 2 or 2.5. Send none to clear this limit.','Zimmerzahl senden, z. B. 2 oder 2,5. Mit none die Grenze entfernen.'):field==='location'?tr('Send a town or district in Germany.','Senden Sie einen Ort oder Stadtteil in Deutschland.'):field==='radius_km'?tr('Send radius in km (0–300).','Senden Sie den Umkreis in km (0–300).'):tr('Send your maximum ','Senden Sie Ihre maximale ')+(field==='max_rent_eur'?'Warmmiete':field==='max_cold_rent_eur'?tr('cold rent','Kaltmiete'):'Nebenkosten')+tr(' in euros/month. Send none to clear this limit. Use /cancel to exit.',' in Euro/Monat. Mit none entfernen, mit /cancel abbrechen.'));return new Response('ok');
       }
       if(cmd==='/cancel') {
         const clean={...r};delete clean._edit;await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:clean});await localizedReply(id,rentalSummary(clean),rentalButtons);return new Response('ok');
@@ -633,11 +684,12 @@ Deno.serve(async req => {
       if((!cb&&!text.startsWith('/')&&r._edit)||cmd==='/set'||cmd==='/location') {
         const field=cmd==='/location'?'location':cmd==='/set'?parts[0]:r._edit;
         const value=cmd==='/location'?rest:cmd==='/set'?parts.slice(1).join(' '):text;
-        if(!['location','radius_km','max_rent_eur','max_cold_rent_eur','max_charges_eur'].includes(field)) { await localizedReply(id,tr('Rental fields: location, radius_km, max_rent_eur, max_cold_rent_eur, max_charges_eur, language.','Mietfelder: location, radius_km, max_rent_eur, max_cold_rent_eur, max_charges_eur, language.'),rentalButtons);return new Response('ok'); }
+        if(!['location','radius_km','max_rent_eur','max_cold_rent_eur','max_charges_eur','min_rooms','max_rooms'].includes(field)) { await localizedReply(id,tr('Rental fields: location, radius_km, max_rent_eur, max_cold_rent_eur, max_charges_eur, language.','Mietfelder: location, radius_km, max_rent_eur, max_cold_rent_eur, max_charges_eur, language.'),rentalButtons);return new Response('ok'); }
         const changed={...r};delete changed._edit;
         if(field==='location') { if(!value.trim()||value.length>100||/[\r\n]/.test(value)) throw new Error('Enter a town in Germany');changed.location=value.trim(); }
         else if(field!=='radius_km'&&['none','off','keine','aus'].includes(value.trim().toLowerCase())) changed[field]=null;
-        else { const n=Number(value.replace('€','').trim().replace(',','.'));if(!Number.isFinite(n)||(field==='radius_km'?(n<0||n>300):(n<=0||n>20000))) throw new Error('Invalid rental number');changed[field]=n; }
+        else { const n=Number(value.replace('€','').trim().replace(',','.'));if(!Number.isFinite(n)||(field==='radius_km'?(n<0||n>300):['min_rooms','max_rooms'].includes(field)?(n<=0||n>20):(n<=0||n>20000))) throw new Error('Invalid rental number');changed[field]=n; }
+        if(changed.min_rooms!=null&&changed.max_rooms!=null&&changed.min_rooms>changed.max_rooms) throw new Error('Minimum rooms exceeds maximum');
         if(!['max_rent_eur','max_cold_rent_eur','max_charges_eur'].some(k=>changed[k]!=null)) throw new Error('Keep at least one rent limit');
         await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:changed});await localizedReply(id,tr('✅ Updated\n\n','✅ Aktualisiert\n\n')+rentalSummary(changed),rentalButtons);return new Response('ok');
       }
@@ -659,9 +711,10 @@ Deno.serve(async req => {
       if(cmd==='/run'||cmd==='/refresh') {
         if(cmd==='/refresh'&&!adminUnlimited) { await localizedReply(id,tr('Only the administrator can force new paid research.','Nur der Administrator kann neue kostenpflichtige Recherche starten.'));return new Response('ok'); }
         const result=await db('POST','rpc/bot_rental_enqueue',{p_user:id,p_key:(cmd==='/refresh'?'refresh:':'rental:')+update.update_id});
-        if(result.error) await localizedReply(id,tr('Rental search not started: ','Mietsuche nicht gestartet: ')+result.error+tr('. Use /last to reopen a saved report for free.','. Mit /last einen gespeicherten Bericht kostenlos öffnen.'));
+        if(result.error==='already_running') await showRunning(id,await activeJob(id),lang,cb?message:undefined);
+        else if(result.error) await localizedReply(id,tr('Rental search not started: ','Mietsuche nicht gestartet: ')+result.error+tr('. Use /last to reopen a saved report for free.','. Mit /last einen gespeicherten Bericht kostenlos öffnen.'));
         else if(result.duplicate) await localizedReply(id,tr('Already recorded; results will arrive here.','Bereits erfasst; die Ergebnisse kommen hier an.'));
-        else { try { await dispatch(result.job_id);await localizedReply(id,tr('Rental search queued. Results will arrive here.','Mietsuche eingereiht. Die Ergebnisse kommen hier an.')); } catch { await localizedReply(id,tr('Saved in the queue; the scheduled worker will recover it.','In der Warteschlange gespeichert; der geplante Worker übernimmt die Suche.')); } }
+        else { try { await showRunning(id,{id:result.job_id},lang,cb?message:undefined); } catch { /* Keep the durable queue. */ } try { await dispatch(result.job_id); } catch { await localizedReply(id,tr('Saved in the queue; the scheduled worker will recover it.','In der Warteschlange gespeichert; der geplante Worker übernimmt die Suche.')); } }
         return new Response('ok');
       }
     }
@@ -977,10 +1030,12 @@ Prices remain unset. We also need merchant Stars proceeds, hosting, tax, currenc
       }
       const result=await db('POST','rpc/bot_enqueue',{p_user:id,p_key:(refresh?'refresh:':'telegram:')+update.update_id});
       if (result.error==='payment_required') await paymentShop(id,user,control,adminUnlimited);
+      else if (result.error==='already_running') await showRunning(id,await activeJob(id),uiLanguage,cb?message:undefined);
       else if (result.error) await localizedReply(id,'Analysis not started: '+result.error+'. Use /support if you need help.');
       else if (result.duplicate) await localizedReply(id,'This request is already recorded. Use /last for the latest report.');
       else {
-        try { await dispatch(result.job_id); await localizedReply(id,refresh?'Additional paid research queued within the monthly cap. Saved apartments will be retained.':'Analysis queued. Results will arrive here; GitHub may take a few minutes.'); }
+        try { await showRunning(id,{id:result.job_id},uiLanguage,cb?message:undefined); } catch { /* Keep the durable queue. */ }
+        try { await dispatch(result.job_id); }
         catch { await localizedReply(id,'Request saved but immediate dispatch failed. The scheduled worker can recover it.'); await reply(admin,'⚠️ Dispatch failed. Job '+result.job_id); }
       }
     } else await localizedReply(id,'Use /help for commands.',buttons);

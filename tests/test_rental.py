@@ -41,6 +41,20 @@ class RentalTests(unittest.TestCase):
         view=split_report(report);text,_=page(view,'j00000000-0000-0000-0000-000000000000',0,'de')
         self.assertIn('Miete & Suchhinweise',text)
 
+    def test_rooms_and_furnishing_known_limits_missing_provisional(self):
+        s={**self.settings(),'min_rooms':2,'max_rooms':3,'furnishing':'partial'}
+        self.assertEqual(matching([self.item(rooms=1,furnishing='partial')],s),([],[]))
+        self.assertEqual(matching([self.item(rooms=2,furnishing='furnished')],s),([],[]))
+        self.assertEqual(len(matching([self.item(rooms=2.5,furnishing='partial')],s)[0]),1)
+        self.assertEqual(len(matching([self.item(rooms=None,furnishing='unknown')],s)[1]),1)
+
+    def test_nearby_alternatives_are_labeled_and_bounded(self):
+        from rental import alternatives
+        s=self.settings()
+        items=[self.item(url='https://example.org/1',warm_rent_eur=1050),self.item(url='https://example.org/2',warm_rent_eur=1200)]
+        alt=alternatives(items,s);self.assertEqual(len(alt),1);self.assertIn('€1050',alt[0]['alternative_reasons'][0])
+        text=render(items,s,'today',{});self.assertIn('outside your original preferences',text);self.assertEqual(len(split_report(text)['cards']),1)
+
     def test_all_matches_paginate_without_cap(self):
         items=[self.item(url=f'https://example.org/rent/{n}') for n in range(28)]
         text=render(items,self.settings(),'2026-10-05',{'new':28})
@@ -51,6 +65,27 @@ class RentalTests(unittest.TestCase):
     def test_sourced_coordinates_filter_radius(self):
         s={**self.settings(),'lat':48.0,'lon':7.85}
         self.assertEqual(matching([self.item(town='Berlin',lat=52.5,lon=13.4)],s),([],[]))
+    def test_discovery_batches_many_links_without_three_result_cap(self):
+        import json
+        from unittest.mock import Mock,patch
+        from rental import analyse
+        items=[self.item(url=f'https://example.org/rent/{n}',rooms=2,furnishing='unfurnished') for n in range(18)]
+        def response(payload,urls):
+            r=Mock();r.output_text=json.dumps(payload)
+            r.model_dump.return_value={'status':'completed','usage':{'input_tokens':100,'output_tokens':100},'output':[{'type':'web_search_call','status':'completed','action':{'type':'open_page','url':url}} for url in urls]}
+            return r
+        discover=response({'leads':[{'url':x['url'],'town':'Freiburg','title':'Apartment'} for x in items]},[x['url'] for x in items])
+        batches=[response({'listings':items[i:i+6],'center':{}},[x['url'] for x in items[i:i+6]]) for i in range(0,18,6)]
+        client=Mock();client.responses.create.side_effect=[discover,*batches]
+        db=Mock();db.request.return_value=[];db.rpc.return_value=True
+        meter={'cost':0,'calls':[],'pending':False}
+        with patch('openai.OpenAI',return_value=client):
+            text,urls,hit=analyse(db,{'id':'test','settings':self.settings()},meter)
+        self.assertEqual(len(urls),18);self.assertEqual(len(split_report(text)['cards']),18)
+        self.assertEqual(client.responses.create.call_count,4)
+        for c in client.responses.create.call_args_list[1:]: self.assertEqual(len(json.loads(c.kwargs['input'])['listing_urls']),6)
+        self.assertEqual(meter['collection_stats']['pending'],0)
+
     def test_fresh_shared_cache_never_calls_openai(self):
         from datetime import datetime,timedelta,timezone
         from unittest.mock import Mock,patch
@@ -68,13 +103,14 @@ class RentalTests(unittest.TestCase):
         from rental import analyse
         x=self.item();response=Mock();response.output_text=json.dumps({'center':{'name':'Freiburg','lat':None,'lon':None,'source_url':''},'listings':[x]})
         response.model_dump.return_value={'status':'completed','usage':{'input_tokens':100,'output_tokens':100},'output':[{'type':'web_search_call','status':'completed','action':{'type':'open_page','url':x['url']}}]}
-        client=Mock();client.responses.create.return_value=response
+        client=Mock();discovery=Mock();discovery.output_text=json.dumps({'leads':[{'url':x['url'],'title':'Apartment','town':'Freiburg'}]});discovery.model_dump.return_value=response.model_dump.return_value
+        client.responses.create.side_effect=[discovery,response]
         db=Mock();db.request.return_value=[];db.rpc.return_value=True
         meter={'cost':0,'calls':[],'pending':False}
         with patch('openai.OpenAI',return_value=client):
             report,urls,hit=analyse(db,{'id':'test','settings':self.settings()},meter)
         self.assertFalse(hit);self.assertEqual(len(urls),1);self.assertEqual(meter['collection_stats']['retained'],1)
-        self.assertGreater(meter['cost'],0);self.assertEqual(client.responses.create.call_count,3)
+        self.assertGreater(meter['cost'],0);self.assertEqual(client.responses.create.call_count,2)
         for call in client.responses.create.call_args_list:
             self.assertEqual(call.kwargs['tools'],[{'type':'web_search','search_context_size':'low'}])
             self.assertNotIn('mortgage rates',call.kwargs['input'])
