@@ -39,12 +39,18 @@ def total_rent(item):
         return item['cold_rent_eur']+item['charges_eur'],'calculated from advertised cold rent + complete charges'
     return None,'Missing total rent'
 
+RENT_FIELDS = ('location','radius_km','max_rent_eur','max_cold_rent_eur','max_charges_eur')
+
 def matching(items,s):
     matches=[]; provisional=[]
     for item in items:
         total,basis=total_rent(item)
         lower=item.get('cold_rent_eur')
-        if (total is not None and total>s['max_rent_eur']) or (total is None and lower is not None and lower>s['max_rent_eur']): continue
+        warm_limit=s.get('max_rent_eur')
+        limits=[('total',total,warm_limit),('cold rent',lower,s.get('max_cold_rent_eur')),('Nebenkosten',item.get('charges_eur'),s.get('max_charges_eur'))]
+        if any(limit is not None and value is not None and value>limit for _,value,limit in limits): continue
+        if warm_limit is not None and total is None and lower is not None and lower>warm_limit: continue
+        missing_limits=[name for name,value,limit in limits if limit is not None and value is None]
         distance=None
         # Exact municipality matches require no invented coordinates. Other towns
         # remain provisional unless both requested center and listing are sourced.
@@ -52,23 +58,23 @@ def matching(items,s):
         if not same and market.point(s) and market.point(item):
             distance=market.distance(market.point(s),market.point(item))
             if distance>s['radius_km']: continue
-        entry={**item,'total':total,'basis':basis,'distance':distance}
-        (matches if total is not None and (same or distance is not None) else provisional).append(entry)
+        entry={**item,'total':total,'basis':basis,'distance':distance,'missing_limits':missing_limits}
+        (matches if not missing_limits and (same or distance is not None) else provisional).append(entry)
     return matches,provisional
 
 def money(value): return 'Missing data' if value is None else f'€{value:,.0f}'
 
 def render(items,s,checked,stats):
     matches,provisional=matching(items,s)
-    header=f"🏠 Rental apartments — {s['location']}\n📍 Germany · within {s['radius_km']} km · maximum Warmmiete {money(s['max_rent_eur'])}/month\nChecked: {checked}\n{len(matches)} within verified limits; {len(provisional)} provisional (rent or distance unverified).\nSearch coverage is limited; this is not an exhaustive market search.\nNew verified listings: {stats.get('new',0)} · retained total: {len(items)}"
+    header=f"🏠 Rental apartments — {s['location']}\n📍 Germany · within {s['radius_km']} km · maximum Warmmiete {money(s.get('max_rent_eur')) if s.get('max_rent_eur') is not None else 'No limit'}/month\nChecked: {checked}\n{len(matches)} within verified limits; {len(provisional)} provisional (rent or distance unverified).\nSearch coverage is limited; this is not an exhaustive market search.\nNew verified listings: {stats.get('new',0)} · retained total: {len(items)}"
     if stats.get('warnings'): header='⚠️ Partial rental research: '+', '.join(stats['warnings'])+'\n\n'+header
     if 'stages_completed' in stats: header+=f"\nCollection stages: {stats['stages_completed']}/3"
     blocks=[]
     for x in matches+provisional:
-        checks=[]
+        checks=[name+' missing — selected limit unverified' for name in x['missing_limits']]
         if x['total'] is None: checks.append('total monthly rent missing — budget compliance unverified')
         if market.location_norm(x['town'])!=market.location_norm(s['location']) and x['distance'] is None: checks.append('distance unverified — radius compliance unverified')
-        blocks.append('\n'.join([f"🏠 — {x['title']}",f"📍 {x['town']}"+(f" · ~{x['distance']:.1f} km" if x['distance'] is not None else ''),f"💵 Total monthly rent: {money(x['total'])} · {x['basis']}",f"🏷 Cold rent: {money(x.get('cold_rent_eur'))}/month",f"📐 Size: {x.get('size_m2') or 'Missing data'} m²",f"🗓 Available: {x.get('available_from') or 'Missing data'}",f"🔐 Deposit: {x.get('deposit') or 'Missing data'}",f"⚠️ {'; '.join(checks) or x.get('risk') or 'Confirm availability, lease and all charges with the landlord.'}",f"🔗 Listing: {x['url']}"]))
+        blocks.append('\n'.join([f"🏠 — {x['title']}",f"📍 {x['town']}"+(f" · ~{x['distance']:.1f} km" if x['distance'] is not None else ''),f"💵 Total monthly rent: {money(x['total'])} · {x['basis']}",f"🏷 Cold rent: {money(x.get('cold_rent_eur'))}/month",f"🧾 Nebenkosten: {money(x.get('charges_eur'))}/month",f"📐 Size: {x.get('size_m2') or 'Missing data'} m²",f"🗓 Available: {x.get('available_from') or 'Missing data'}",f"🔐 Deposit: {x.get('deposit') or 'Missing data'}",f"⚠️ {'; '.join(checks) or x.get('risk') or 'Confirm availability, lease and all charges with the landlord.'}",f"🔗 Listing: {x['url']}"]))
     notes='💶 RENT & SEARCH NOTES\nWarmmiete is the advertised total housing rent. Electricity, internet or other separately paid charges may be extra. Missing charges are never treated as zero. Provisional listings may exceed your budget or radius. Availability is not guaranteed; contact the landlord.\nPublic listing data is removed after seven days.\nInformation only; verify the listing and lease independently.'
     return header+'\n\n'+'\n\n'.join(blocks)+'\n\n'+notes
 
@@ -77,7 +83,7 @@ def analyse(db,job,meter):
     from agent import estimate_cost
     if MODEL not in ('gpt-6.1-sol','gpt-6-astra'): raise ResearchDataError('UnpricedModel')
     s=dict(job['settings']); now=datetime.now(timezone.utc)
-    key=hashlib.sha256(json.dumps({k:s[k] for k in ('location','radius_km','max_rent_eur')},sort_keys=True).encode()).hexdigest()
+    key=hashlib.sha256(json.dumps({k:s.get(k) for k in RENT_FIELDS},sort_keys=True).encode()).hexdigest()
     rows=db.request('GET','bot_rental_cache?cache_key=eq.'+key)
     old=rows[0] if rows else None
     if old and datetime.fromisoformat(old['checked_at'].replace('Z','+00:00'))>now-timedelta(hours=24) and not job.get('force_refresh'):
@@ -92,7 +98,7 @@ def analyse(db,job,meter):
         if meter['cost']>=0.8: meter.setdefault('warnings',[]).append('RentalCostLimit');break
         meter['pending']=True
         response=OpenAI(timeout=300,max_retries=0).responses.create(model=MODEL,instructions=INSTRUCTIONS,
-            input=json.dumps({'settings':{k:s[k] for k in ('location','radius_km','max_rent_eur')},'stage':stage+1,'previous_urls':list(items),'task':'Search different portals and towns for additional distinct listings; open each individual page.'}),
+            input=json.dumps({'settings':{k:s.get(k) for k in RENT_FIELDS},'stage':stage+1,'previous_urls':list(items),'task':'Search different portals and towns for additional distinct listings; open each individual page.'}),
             tools=[{'type':'web_search','search_context_size':'low'}],max_tool_calls=8,max_output_tokens=5000,
             text={'format':{'type':'json_schema','name':'rental_listings','strict':True,'schema':SCHEMA}},include=['web_search_call.action.sources'],store=False)
         data=response.model_dump();cost,usage=estimate_cost(data,MODEL)

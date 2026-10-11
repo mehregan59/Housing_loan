@@ -22,6 +22,14 @@ class RentalTests(unittest.TestCase):
         confirmed,provisional=matching([self.item(),self.item(warm_rent_eur=1001),self.item(warm_rent_eur=None,charges_complete=False),self.item(town='Lahr')],self.settings())
         self.assertEqual(len(confirmed),1);self.assertEqual(len(provisional),2)
         self.assertEqual(matching([self.item(warm_rent_eur=None,cold_rent_eur=1001)],self.settings()),([],[]))
+    def test_separate_limits_and_missing_components(self):
+        s={**self.settings(),'max_cold_rent_eur':700}
+        self.assertEqual(matching([self.item()],s),([],[]))
+        s={**self.settings(),'max_rent_eur':None,'max_cold_rent_eur':800,'max_charges_eur':200}
+        self.assertEqual(len(matching([self.item()],s)[0]),1)
+        self.assertEqual(len(matching([self.item(charges_eur=None)],s)[1]),1)
+        self.assertEqual(matching([self.item(charges_eur=250)],s),([],[]))
+        self.assertIn('Nebenkosten: €150',render([self.item()],s,'today',{}))
     def test_all_matches_paginate_without_cap(self):
         items=[self.item(url=f'https://example.org/rent/{n}') for n in range(28)]
         text=render(items,self.settings(),'2026-10-05',{'new':28})

@@ -504,7 +504,7 @@ Deno.serve(async req => {
     const [rawcmd, ...parts] = text.split(/\s+/);
     const cmd = rawcmd.split('@')[0].toLowerCase();
     const rest = parts.join(' ');
-    const services={inline_keyboard:[[button('🏦 Property investment','service:investment')],[button('🏠 Rental apartment','service:rental')]]};
+    const services={inline_keyboard:[[button('🏦 Property investment','service:investment')],...(adminUnlimited?[[button('🏠 Rental apartment','service:rental')]]:[])]};
     if(action.startsWith('agreement:')) {
       const version=Number(action.slice(10));
       if(!Number.isSafeInteger(version)||version!==Number(billingControl?.agreement_version||1)||!billingControl?.agreement_text) {
@@ -519,6 +519,7 @@ Deno.serve(async req => {
       if(action.startsWith('service:')) {
         const service=action.slice(8);
         if(!['investment','rental'].includes(service)) throw new Error('Invalid service');
+        if(service==='rental'&&!adminUnlimited) { await reply(id,'Rental searches are currently administrator-only.');return new Response('ok'); }
         await db('PATCH','bot_users?user_id=eq.'+id,{service,service_selected:true});
         if(service==='investment') {
           const preview=await db('POST','rpc/bot_weekly_preview',{p_user:id});
@@ -535,28 +536,40 @@ Deno.serve(async req => {
       await reply(id,'First choose your service. Your free report will match that choice.',services);return new Response('ok');
     }
     if(user.accepted_at&&user.service==='rental') {
-      const rentalButtons={inline_keyboard:[[button('📍 Area','rentedit:location'),button('📏 Radius','rentedit:radius_km')],[button('💵 Maximum total rent','rentedit:max_rent_eur')],[button('🔎 Run rental search','run'),button('📂 Last report','last')],[button('📅 Daily on','rentdaily:on'),button('Daily off','rentdaily:off')],[button('🔀 Change service','service')]]};
+      const rentalButtons={inline_keyboard:[[button('📍 Area','rentedit:location'),button('📏 Radius','rentedit:radius_km')],[button('💵 Max Warmmiete','rentedit:max_rent_eur')],[button('🏷 Max cold rent','rentedit:max_cold_rent_eur'),button('🧾 Max Nebenkosten','rentedit:max_charges_eur')],[button('🔎 Run rental search','run'),button('📂 Last report','last')],[button('📅 Daily on','rentdaily:on'),button('Daily off','rentdaily:off')],[button('🔀 Change service','service')]]};
       const r=user.rental_settings||{location:'Freiburg',radius_km:25,max_rent_eur:1000};
+      const rentalSummary=(v:any)=>`🏠 Your rental settings
+📍 ${v.location}, Germany
+📏 Radius: ${v.radius_km} km
+💵 Maximum Warmmiete: ${v.max_rent_eur==null?'No limit':'€'+v.max_rent_eur+'/month'}
+🏷 Maximum cold rent: ${v.max_cold_rent_eur==null?'No limit':'€'+v.max_cold_rent_eur+'/month'}
+🧾 Maximum Nebenkosten: ${v.max_charges_eur==null?'No limit':'€'+v.max_charges_eur+'/month'}
+📅 Daily: ${user.rental_daily?'On':'Off'} · 09:00 Europe/Berlin
+
+Warmmiete includes cold rent and advertised complete charges. These limits are checked separately; they are not added together. Missing components are flagged for verification. Use none to clear a rent limit; keep at least one rent limit. Separate electricity/internet may be extra. Tap a setting to edit it, then Run. /service changes service; /support contacts support.`;
+
       if(action.startsWith('rentedit:')) {
         const field=action.slice(9);
-        if(!['location','radius_km','max_rent_eur'].includes(field)) throw new Error('Invalid rental setting');
+        if(!['location','radius_km','max_rent_eur','max_cold_rent_eur','max_charges_eur'].includes(field)) throw new Error('Invalid rental setting');
         await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:{...r,_edit:field}});
-        await reply(id,field==='location'?'Send a town or district in Germany.':field==='radius_km'?'Send radius in km (0–300).':'Send your maximum Warmmiete in euros per month, e.g. 1200. Use /cancel to exit.');return new Response('ok');
+        await reply(id,field==='location'?'Send a town or district in Germany.':field==='radius_km'?'Send radius in km (0–300).':'Send your maximum '+(field==='max_rent_eur'?'Warmmiete':field==='max_cold_rent_eur'?'cold rent':'Nebenkosten')+' in euros/month. Send none to clear this limit. Use /cancel to exit.');return new Response('ok');
       }
       if(cmd==='/cancel') {
-        const clean={...r};delete clean._edit;await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:clean});await reply(id,'Edit cancelled.',rentalButtons);return new Response('ok');
+        const clean={...r};delete clean._edit;await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:clean});await reply(id,rentalSummary(clean),rentalButtons);return new Response('ok');
       }
       if((!cb&&!text.startsWith('/')&&r._edit)||cmd==='/set'||cmd==='/location') {
         const field=cmd==='/location'?'location':cmd==='/set'?parts[0]:r._edit;
         const value=cmd==='/location'?rest:cmd==='/set'?parts.slice(1).join(' '):text;
-        if(!['location','radius_km','max_rent_eur'].includes(field)) { await reply(id,'Rental fields: location, radius_km, max_rent_eur.',rentalButtons);return new Response('ok'); }
+        if(!['location','radius_km','max_rent_eur','max_cold_rent_eur','max_charges_eur'].includes(field)) { await reply(id,'Rental fields: location, radius_km, max_rent_eur, max_cold_rent_eur, max_charges_eur.',rentalButtons);return new Response('ok'); }
         const changed={...r};delete changed._edit;
         if(field==='location') { if(!value.trim()||value.length>100||/[\r\n]/.test(value)) throw new Error('Enter a town in Germany');changed.location=value.trim(); }
+        else if(field!=='radius_km'&&['none','off'].includes(value.trim().toLowerCase())) changed[field]=null;
         else { const n=Number(value.replace('€','').trim().replace(',','.'));if(!Number.isFinite(n)||(field==='radius_km'?(n<0||n>300):(n<=0||n>20000))) throw new Error('Invalid rental number');changed[field]=n; }
-        await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:changed});await reply(id,'✅ Rental setting updated.',rentalButtons);return new Response('ok');
+        if(!['max_rent_eur','max_cold_rent_eur','max_charges_eur'].some(k=>changed[k]!=null)) throw new Error('Keep at least one rent limit');
+        await db('PATCH','bot_users?user_id=eq.'+id,{rental_settings:changed});await reply(id,'✅ Updated\n\n'+rentalSummary(changed),rentalButtons);return new Response('ok');
       }
       if(cmd==='/settings'||cmd==='/guide'||cmd==='/help'||action.startsWith('guide:')) {
-        await reply(id,`🏠 Rental search\n📍 ${r.location}, Germany\n📏 Radius: ${r.radius_km} km\n💵 Maximum Warmmiete: €${r.max_rent_eur}/month\n📅 Daily: ${user.rental_daily?'On':'Off'} · 09:00 Europe/Berlin\n\nTap a setting to edit it, then Run. Advertised Warmmiete is total housing rent; separate electricity/internet may cost extra. Missing rent or distance is shown as provisional, never zero. First report free; pilot users remain free. Reports reopen free for seven days. /daily on or off controls delivery. /service switches services. /support followed by your question contacts support.`,rentalButtons);return new Response('ok');
+        await reply(id,rentalSummary(r),rentalButtons);return new Response('ok');
       }
       if(cmd==='/daily'||action.startsWith('rentdaily:')) {
         const choice=cmd==='/daily'?rest:action.slice(10);

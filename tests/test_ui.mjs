@@ -376,8 +376,14 @@ await sendAs(456,'/daily on');assert.equal(renter.rental_daily,true);
 await sendAs(456,'pay:report',true);assert.match(messages.at(-1).text,/checkout is closed/);
 await sendAs(456,'service:investment',true);assert.equal(renter.service,'investment');assert.match(messages.at(-2).text,/free weekly preview/);
 renter.accepted_at=null;renter.service_selected=false;
-await sendAs(456,'/accept');assert.match(messages.at(-1).text,/Which service/);assert.equal(messages.at(-1).reply_markup.inline_keyboard.length,2);
+await sendAs(456,'/accept');assert.match(messages.at(-1).text,/Which service/);assert.equal(messages.at(-1).reply_markup.inline_keyboard.length,1);
+await sendAs(456,'service:rental',true);assert.match(messages.at(-1).text,/administrator-only/);
 await sendAs(456,'/run');assert.match(messages.at(-1).text,/First choose your service/);
+renter.accepted_at='2026-10-05';renter.service='rental';renter.service_selected=true;
+await sendAs(123,'rentedit:max_cold_rent_eur',true);await sendAs(123,'800');assert.equal(renter.rental_settings.max_cold_rent_eur,800);assert.match(messages.at(-1).text,/Maximum cold rent: €800/);
+await sendAs(123,'/set max_charges_eur 200');assert.match(messages.at(-1).text,/Maximum Nebenkosten: €200/);
+await sendAs(123,'/set max_rent_eur none');assert.equal(renter.rental_settings.max_rent_eur,null);assert.match(messages.at(-1).text,/Maximum Warmmiete: No limit/);
+await sendAs(123,'/location Berlin');assert.match(messages.at(-1).text,/Berlin, Germany/);assert.match(messages.at(-1).text,/Maximum cold rent: €800/);
 console.log('Rental service choice, free-preview fallback, separate editing and closed checkout passed');
 
 // Agreement updates require the exact current version and unpin only owned notices.
